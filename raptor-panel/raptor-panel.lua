@@ -122,6 +122,8 @@ local currentTab = 1  -- 1: Economy, 2: Damage, 3: Queens
 local vsx, vsy
 local scaledWidth, scaledHeight
 local initialScaleSet = false  -- Track if UI scale has been properly initialized
+local dynamicPanelHeight = CONFIG.PANEL_HEIGHT  -- Dynamic panel height based on player count
+local dynamicHeightCalculated = false  -- Track if we've calculated dynamic height yet
 
 -- Game data
 local gameInfo = {}
@@ -218,7 +220,7 @@ local function updateUIScale()
 
 	-- Update scaled dimensions
 	scaledWidth = CONFIG.PANEL_WIDTH * uiScale
-	scaledHeight = CONFIG.PANEL_HEIGHT * uiScale
+	scaledHeight = dynamicPanelHeight * uiScale
 
 	-- Update font sizes (use base config values, not accumulated)
 	fontSize = CONFIG.FONT_SIZE * uiScale
@@ -278,6 +280,30 @@ local function FormatNumber(num)
 	end
 end
 
+local function calculateRequiredPanelHeight()
+	-- Count non-raptor/scavenger teams (same logic as UpdatePlayerEcoData)
+	local playerCount = 0
+	for i = 1, #teamIDs do
+		local teamID = teamIDs[i]
+		local playerName = getPlayerName(teamID)
+		if playerName and playerName ~= '' and not (playerName:find('Raptors') or playerName:find('Scavengers')) then
+			playerCount = playerCount + 1
+		end
+	end
+
+	-- Calculate required content height for this many rows
+	-- Formula: rowHeight = SMALL_FONT_SIZE + 4 + ROW_SPACING = 14 + 4 + 8 = 26
+	local rowHeight = CONFIG.SMALL_FONT_SIZE + 4 + CONFIG.ROW_SPACING
+	local contentHeight = 40 + rowHeight * playerCount
+
+	-- Calculate total panel height
+	-- = HEADER + STATUS + TAB + PADDING*4 + contentHeight
+	local requiredHeight = CONFIG.HEADER_HEIGHT + CONFIG.STATUS_HEIGHT + CONFIG.TAB_HEIGHT + (CONFIG.PADDING * 4) + contentHeight
+
+	-- Use at least the minimum configured height
+	return math.max(CONFIG.PANEL_HEIGHT, requiredHeight)
+end
+
 --------------------------------------------------------------------------------
 -- Data Update Functions
 --------------------------------------------------------------------------------
@@ -294,7 +320,7 @@ local function UpdatePlayerEcoData()
 		local teamID = teamIDs[i]
 		local playerName = getPlayerName(teamID)
 
-		if playerName and not (playerName:find('Raptors') or playerName:find('Scavengers')) then
+		if playerName and playerName ~= '' and not (playerName:find('Raptors') or playerName:find('Scavengers')) then
 			local ecoValue = playerEcoAttractionsRaw[teamID] or 0
 			ecoValue = math.max(0, ecoValue)
 			sum = sum + ecoValue
@@ -592,8 +618,9 @@ local function drawEconomyTab()
 		y = y - (CONFIG.LINE_SPACING * uiScale)
 
 		-- Rows
-		local tabContentHeight = (TAB_CONTENT_HEIGHT * uiScale)
-		local rowHeight = smallFontSize + (CONFIG.ROW_SPACING * uiScale)
+		local tabContentHeight = (dynamicPanelHeight - CONFIG.HEADER_HEIGHT - CONFIG.STATUS_HEIGHT - CONFIG.TAB_HEIGHT - (CONFIG.PADDING * 4)) * uiScale
+		local rowTotalHeight = smallFontSize + (4 * uiScale)
+		local rowHeight = rowTotalHeight + (CONFIG.ROW_SPACING * uiScale)
 		local maxRows = math.floor((tabContentHeight - (40 * uiScale)) / rowHeight)
 		for i, data in ipairs(playerEcoData) do
 			if i > maxRows then break end
@@ -608,27 +635,29 @@ local function drawEconomyTab()
 				color = COLOR_DANGER_LOW
 			end
 
-			y = y - smallFontSize
+			-- Position row
+			y = y - rowTotalHeight
+			local textY = y + (rowTotalHeight - smallFontSize) / 2
 
 			-- Background highlight for current player
 			if data.isMe then
-				DrawRect(x, y - (2 * uiScale), scaledWidth - padding * 2, smallFontSize + (4 * uiScale), CONFIG.COLOR_HIGHLIGHT)
+				DrawRect(x, y, scaledWidth - padding * 2, rowTotalHeight, CONFIG.COLOR_HIGHLIGHT)
 			end
 
 			-- Player name
 			local namePrefix = data.isMe and "> " or "  "
-			DrawText(namePrefix .. data.name, x + (CONFIG.ECO_COL_PLAYER * uiScale), y, smallFontSize, color)
+			DrawText(namePrefix .. data.name, x + (CONFIG.ECO_COL_PLAYER * uiScale), textY, smallFontSize, color)
 
 			-- Multiplier
-			DrawText(string.format("%.1fX", data.multiplier), x + (CONFIG.ECO_COL_MULT * uiScale), y, smallFontSize, color)
+			DrawText(string.format("%.1fX", data.multiplier), x + (CONFIG.ECO_COL_MULT * uiScale), textY, smallFontSize, color)
 
 			-- Percentage
-			DrawText(string.format("%.0f%%", data.percentage), x + (CONFIG.ECO_COL_SHARE * uiScale), y, smallFontSize, color)
+			DrawText(string.format("%.0f%%", data.percentage), x + (CONFIG.ECO_COL_SHARE * uiScale), textY, smallFontSize, color)
 
 			-- Progress bar
 			local barX = x + (CONFIG.ECO_COL_BAR * uiScale)
 			local barWidth = scaledWidth - padding * 2 - (CONFIG.ECO_COL_BAR * uiScale)
-			DrawProgressBar(barX, y - (2 * uiScale), barWidth, smallFontSize + (2 * uiScale), data.percentage, color)
+			DrawProgressBar(barX, y, barWidth, rowTotalHeight, data.percentage, color)
 
 			y = y - (CONFIG.ROW_SPACING * uiScale)
 		end
@@ -667,25 +696,29 @@ local function drawDamageTab()
 
 		-- Rows
 		local medals = {"#1", "#2", "#3"}
-		local tabContentHeight = (TAB_CONTENT_HEIGHT * uiScale)
-		local maxRows = math.floor((tabContentHeight - (40 * uiScale)) / (smallFontSize + (CONFIG.ROW_SPACING * uiScale)))
+		local tabContentHeight = (dynamicPanelHeight - CONFIG.HEADER_HEIGHT - CONFIG.STATUS_HEIGHT - CONFIG.TAB_HEIGHT - (CONFIG.PADDING * 4)) * uiScale
+		local rowTotalHeight = smallFontSize + (4 * uiScale)
+		local rowHeight = rowTotalHeight + (CONFIG.ROW_SPACING * uiScale)
+		local maxRows = math.floor((tabContentHeight - (40 * uiScale)) / rowHeight)
 		for i, data in ipairs(bossData.playerDamages) do
 			if i > maxRows then break end
 
-			y = y - smallFontSize
+			-- Position row
+			y = y - rowTotalHeight
+			local textY = y + (rowTotalHeight - smallFontSize) / 2
 
 			-- Medal or rank number
 			local rankText = medals[i] or ("#" .. tostring(i))
-			DrawText(rankText, x + (CONFIG.DMG_COL_RANK * uiScale), y, smallFontSize, COLOR_TEXT)
+			DrawText(rankText, x + (CONFIG.DMG_COL_RANK * uiScale), textY, smallFontSize, COLOR_TEXT)
 
 			-- Player name
-			DrawText(data.name, x + (CONFIG.DMG_COL_PLAYER * uiScale), y, smallFontSize, COLOR_TEXT)
+			DrawText(data.name, x + (CONFIG.DMG_COL_PLAYER * uiScale), textY, smallFontSize, COLOR_TEXT)
 
 			-- Damage
-			DrawText(FormatNumber(data.damage), x + (CONFIG.DMG_COL_DAMAGE * uiScale), y, smallFontSize, CONFIG.COLOR_DAMAGE_VALUE)
+			DrawText(FormatNumber(data.damage), x + (CONFIG.DMG_COL_DAMAGE * uiScale), textY, smallFontSize, CONFIG.COLOR_DAMAGE_VALUE)
 
 			-- Relative
-			DrawText(string.format("%.1fX", data.relative), x + (CONFIG.DMG_COL_RELATIVE * uiScale), y, smallFontSize, CONFIG.COLOR_DAMAGE_RELATIVE)
+			DrawText(string.format("%.1fX", data.relative), x + (CONFIG.DMG_COL_RELATIVE * uiScale), textY, smallFontSize, CONFIG.COLOR_DAMAGE_RELATIVE)
 
 			y = y - (CONFIG.ROW_SPACING * uiScale)
 		end
@@ -763,14 +796,17 @@ local function drawBossTab()
 			y = y - (CONFIG.LINE_SPACING * uiScale)
 
 			-- Resistance rows
+			local rowTotalHeight = smallFontSize + (4 * uiScale)
 			for i, resistance in ipairs(bossData.resistances) do
 				if i > CONFIG.MAX_RESISTANCE_DISPLAY then break end
 
-				y = y - smallFontSize
+				-- Position row
+				y = y - rowTotalHeight
+				local textY = y + (rowTotalHeight - smallFontSize) / 2
 
-				DrawText(resistance.name, x + (CONFIG.BOSS_COL_UNIT * uiScale), y, smallFontSize, COLOR_TEXT)
-				DrawText(string.format("%.0f%%", resistance.percent * 100), x + (CONFIG.BOSS_COL_RESIST * uiScale), y, smallFontSize, CONFIG.COLOR_RESISTANCE)
-				DrawText(FormatNumber(resistance.damage), x + (CONFIG.BOSS_COL_DAMAGE * uiScale), y, smallFontSize, CONFIG.COLOR_SUBTITLE)
+				DrawText(resistance.name, x + (CONFIG.BOSS_COL_UNIT * uiScale), textY, smallFontSize, COLOR_TEXT)
+				DrawText(string.format("%.0f%%", resistance.percent * 100), x + (CONFIG.BOSS_COL_RESIST * uiScale), textY, smallFontSize, CONFIG.COLOR_RESISTANCE)
+				DrawText(FormatNumber(resistance.damage), x + (CONFIG.BOSS_COL_DAMAGE * uiScale), textY, smallFontSize, CONFIG.COLOR_SUBTITLE)
 
 				y = y - (CONFIG.ROW_SPACING * uiScale)
 			end
@@ -823,6 +859,7 @@ function widget:Initialize()
 	local playerTeams = HarmonyRaptor.getPlayerTeams()
 
 	teamIDs = Spring.GetTeamList()
+
 	for i = 1, #playerTeams do
 		playerEcoAttractionsRaw[playerTeams[i]] = 0
 	end
@@ -860,6 +897,15 @@ end
 
 function widget:DrawScreen()
 	if not font then return end
+
+	-- Calculate dynamic panel height on first draw (when Spring APIs are ready)
+	if not dynamicHeightCalculated then
+		dynamicPanelHeight = calculateRequiredPanelHeight()
+		updateUIScale()
+		panelX = vsx - scaledWidth - (CONFIG.PANEL_MARGIN_X * uiScale)
+		panelY = vsy - scaledHeight - (CONFIG.PANEL_MARGIN_Y * uiScale)
+		dynamicHeightCalculated = true
+	end
 
 	-- Ensure UI scale is properly calculated on first draw
 	if not initialScaleSet then
