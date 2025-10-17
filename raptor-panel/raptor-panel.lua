@@ -6,7 +6,7 @@ function widget:GetInfo()
 		date = '16.10.2025',
 		layer = 0,
 		enabled = true,
-		version = 1,
+		version = 2,
 	}
 end
 
@@ -314,6 +314,12 @@ local function UpdatePlayerEcoData()
 			data.percentage = (data.value / sum) * 100
 			data.multiplier = (#playerEcoData * data.value) / sum
 		end
+	else
+		-- Set defaults when no eco value exists yet
+		for _, data in ipairs(playerEcoData) do
+			data.percentage = 0
+			data.multiplier = 0
+		end
 	end
 
 	-- Sort by value descending
@@ -351,7 +357,7 @@ local function UpdateBossData()
 			})
 		end
 	end
-	table.sort(bossData.resistances, function(a, b) return a.percent > b.percent end)
+	table.sort(bossData.resistances, function(a, b) return a.damage > b.damage end)
 
 	-- Process player damages
 	local totalDamage = 0
@@ -660,7 +666,7 @@ local function drawDamageTab()
 		y = y - (CONFIG.LINE_SPACING * uiScale)
 
 		-- Rows
-		local medals = {"#1", "#2", "#3"} -- Using text instead of emojis for font compatibility
+		local medals = {"#1", "#2", "#3"}
 		local tabContentHeight = (TAB_CONTENT_HEIGHT * uiScale)
 		local maxRows = math.floor((tabContentHeight - (40 * uiScale)) / (smallFontSize + (CONFIG.ROW_SPACING * uiScale)))
 		for i, data in ipairs(bossData.playerDamages) do
@@ -834,12 +840,6 @@ function widget:Initialize()
 
 	UpdateGameInfo()
 	UpdatePlayerEcoData()
-
-	-- Auto-select appropriate tab based on stage
-	local stage = HarmonyRaptor.getRaptorStage()
-	if stage == "boss" then
-		currentTab = 3
-	end
 end
 
 function widget:Shutdown()
@@ -938,12 +938,6 @@ function widget:GameFrame(n)
 		UpdateGameInfo()
 		UpdatePlayerEcoData()
 		UpdateBossData()
-
-		-- Auto-switch to boss tab when boss spawns
-		local stage = HarmonyRaptor.getRaptorStage()
-		if stage == "boss" and currentTab ~= 3 then
-			currentTab = 3
-		end
 	end
 end
 
