@@ -2,7 +2,7 @@
 A collection of tweaks for Beyond All Reason RTS
 
 ## How to install
-Select a widget and download all its files into `data\LuaUI\Widgets` inside your BAR installation folder.
+Select a widget and download its folder into your `[...]\Beyond-All-Reason\data\LuaUI\Widgets\` folder and enable it from the in-game settings menu. Don't forget to check the dependencies!
 
 You can also automate the download/update process with a batch script. The example can be found at the root of this repository.
 
