@@ -508,7 +508,7 @@ local function drawStatusPanel()
 		-- Anger Rate Breakdown
 		local components = HarmonyRaptor.getAngerComponents()
 		DrawText(string.format("Rate: %.2f/s", components.total), x + padding, textY, smallFontSize, CONFIG.COLOR_SUBTITLE)
-		textY = textY - smallFontSize - (3 * uiScale)
+		textY = textY - smallFontSize - lineSpacing
 
 		-- Single format string for better performance
 		local breakdownText = string.format("Base: %.2f/s  Eco: %.2f/s  Aggro: %.2f/s",
@@ -518,7 +518,7 @@ local function drawStatusPanel()
 	elseif stage == "boss" then
 		-- Boss Phase
 		DrawText("QUEEN ACTIVE", x + padding, textY, fontSize * 1.2, COLOR_DANGER_HIGH)
-		textY = textY - fontSize * 1.5 - lineSpacing
+		textY = textY - (fontSize * 1.2) - lineSpacing
 
 		local queenHealth = HarmonyRaptor.getQueenHealth()
 		local queensKilled = HarmonyRaptor.getQueensKilled()
@@ -527,9 +527,9 @@ local function drawStatusPanel()
 			statusString = statusString .. string.format(", Killed: %d/%d", queensKilled, nBosses)
 		end
 
-		DrawText(statusString, x + padding + (10 * uiScale), textY, fontSize, COLOR_TEXT)
+		DrawText(statusString, x + padding, textY, fontSize, COLOR_TEXT)
 		textY = textY - lineSpacing
-		DrawProgressBar(x + padding + (10 * uiScale), textY - (20 * uiScale), scaledWidth - padding * 2 - (10 * uiScale), 18 * uiScale, queenHealth, COLOR_BOSS_HEALTH)
+		DrawProgressBar(x + padding, textY - (20 * uiScale), scaledWidth - padding * 2, 18 * uiScale, queenHealth, COLOR_BOSS_HEALTH)
 		textY = textY - (25 * uiScale)
 	end
 end
@@ -738,7 +738,7 @@ local function drawBossTab()
 			font:SetTextColor(1, 1, 1, 1) -- Reset to default color
 			font:End()
 
-			y = y - (CONFIG.SECTION_SPACING * uiScale)
+			y = y - (lineHeight - smallFontSize) - (CONFIG.SECTION_SPACING * uiScale * 2)
 		end
 
 		-- Resistances
