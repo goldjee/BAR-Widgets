@@ -1,6 +1,6 @@
 function widget:GetInfo()
 	return {
-		name = 'Raptor Stats Panel',
+		name = 'Raptor Panel',
 		desc = 'Shows raptor and player statistics in a compact interface',
 		author = 'Insider',
 		date = '16.10.2025',
