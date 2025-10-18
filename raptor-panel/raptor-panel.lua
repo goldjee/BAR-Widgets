@@ -13,6 +13,7 @@ end
 --------------------------------------------------------------------------------
 -- Imports and Constants
 --------------------------------------------------------------------------------
+local Harmony = VFS.Include('LuaUI/Widgets/harmony/harmony.lua')
 local HarmonyRaptor = VFS.Include('LuaUI/Widgets/harmony/harmony-raptor.lua')
 local modOptions = Spring.GetModOptions()
 local nBosses = modOptions.raptor_queen_count or 1
@@ -35,31 +36,6 @@ local CONFIG = {
 	PANEL_MARGIN_X = 20,
 	PANEL_MARGIN_Y = 80,
 
-	-- Colors
-	COLOR_BG = {0.1, 0.1, 0.1, 0.85},
-	COLOR_HEADER = {0.15, 0.15, 0.15, 0.9},
-	COLOR_STATUS = {0.12, 0.12, 0.12, 0.9},
-	COLOR_TAB_INACTIVE = {0.2, 0.2, 0.2, 0.9},
-	COLOR_TAB_ACTIVE = {0.25, 0.35, 0.45, 0.9},
-	COLOR_TEXT = {1, 1, 1, 1},
-	COLOR_DANGER_HIGH = {1, 0.3, 0.3, 1},
-	COLOR_DANGER_MED = {1, 0.8, 0.3, 1},
-	COLOR_DANGER_LOW = {0.3, 1, 0.3, 1},
-	COLOR_BOSS_HEALTH = {0.8, 0.2, 0.2, 1},
-	COLOR_GRACE = {0.3, 1, 0.3, 1},
-	COLOR_ANGER = {1, 0.8, 0.3, 1},
-	COLOR_DIFFICULTY = {0.8, 0.8, 1, 1},
-	COLOR_SUBTITLE = {0.7, 0.7, 0.7, 1},
-	COLOR_HEADER_TEXT = {1, 1, 0.5, 1},
-	COLOR_DAMAGE_VALUE = {0.8, 0.8, 1, 1},
-	COLOR_DAMAGE_RELATIVE = {0.7, 0.9, 1, 1},
-	COLOR_RESISTANCE = {1, 0.5, 0.5, 1},
-	COLOR_MUTED = {0.5, 0.5, 0.5, 1},
-	COLOR_BORDER = {1, 1, 1, 0.3},
-	COLOR_LINE = {1, 1, 1, 0.2},
-	COLOR_HIGHLIGHT = {0.3, 0.3, 0.5, 0.3},
-	COLOR_PROGRESS_BG = {0.2, 0.2, 0.2, 0.8},
-
 	-- Threat Thresholds
 	THREAT_HIGH = 1.7,
 	THREAT_MED = 1.2,
@@ -70,7 +46,6 @@ local CONFIG = {
 	-- UI Layout
 	ROW_SPACING = 8,
 	LINE_SPACING = 5,
-	SECTION_SPACING = 10,
 	MAX_BOSS_DISPLAY = 50,
 	MAX_RESISTANCE_DISPLAY = 3,
 
@@ -92,20 +67,28 @@ local CONFIG = {
 	BOSS_COL_DAMAGE = 290,
 }
 
--- Derived constants
-local TAB_CONTENT_HEIGHT = CONFIG.PANEL_HEIGHT - CONFIG.HEADER_HEIGHT - CONFIG.STATUS_HEIGHT - CONFIG.TAB_HEIGHT - (CONFIG.PADDING * 4)
+-- Consolidated color palette
+local COLORS = {
+	-- Text
+	TEXT_PRIMARY = {1, 1, 1, 1},
+	TEXT_DIM = {0.7, 0.7, 0.7, 1},
+	TEXT_ACCENT = {1, 1, 0.5, 1},
 
--- Legacy color constants for backward compatibility
-local COLOR_BG = CONFIG.COLOR_BG
-local COLOR_HEADER = CONFIG.COLOR_HEADER
-local COLOR_STATUS = CONFIG.COLOR_STATUS
-local COLOR_TAB_INACTIVE = CONFIG.COLOR_TAB_INACTIVE
-local COLOR_TAB_ACTIVE = CONFIG.COLOR_TAB_ACTIVE
-local COLOR_TEXT = CONFIG.COLOR_TEXT
-local COLOR_DANGER_HIGH = CONFIG.COLOR_DANGER_HIGH
-local COLOR_DANGER_MED = CONFIG.COLOR_DANGER_MED
-local COLOR_DANGER_LOW = CONFIG.COLOR_DANGER_LOW
-local COLOR_BOSS_HEALTH = CONFIG.COLOR_BOSS_HEALTH
+	-- Status/Threat
+	RED = {1, 0.3, 0.3, 1},
+	ORANGE = {1, 0.8, 0.3, 1},
+	GREEN = {0.3, 1, 0.3, 1},
+	BLUE = {0.8, 0.8, 1, 1},
+
+	-- Backgrounds
+	BG_PANEL = {0.1, 0.1, 0.1, 0.85},
+	BG_HEADER = {0.15, 0.15, 0.15, 0.9},
+	BG_ACTIVE = {0.25, 0.35, 0.45, 0.9},
+	BG_HIGHLIGHT = {0.3, 0.3, 0.5, 0.3},
+
+	-- Borders
+	BORDER = {1, 1, 1, 0.25},
+}
 
 -- Font
 local font
@@ -121,22 +104,24 @@ local dragOffsetX, dragOffsetY = 0, 0
 local currentTab = 1  -- 1: Economy, 2: Damage, 3: Queens
 local vsx, vsy
 local scaledWidth, scaledHeight
-local initialScaleSet = false  -- Track if UI scale has been properly initialized
-local dynamicPanelHeight = CONFIG.PANEL_HEIGHT  -- Dynamic panel height based on player count
-local dynamicHeightCalculated = false  -- Track if we've calculated dynamic height yet
+local initialScaleSet = false
+local dynamicPanelHeight = CONFIG.PANEL_HEIGHT
+local dynamicHeightCalculated = false
+
+-- Cached scaled dimensions and layout positions
+local scaled = {}
+local layout = {}
 
 -- Game data
 local gameInfo = {}
 local playerEcoData = {}
-local playerDamageData = {}
 local bossData = {}
 local teamIDs = {}
 local raptorsTeamID
-local cachedPlayerNames = {}
+local playerEcoAttractionsRaw = {}
 
 -- Performance caching
 local textWidthCache = {}
-local scaledDimensionsCache = {}
 
 -- Boss colors for health bars
 local bossColors = {
@@ -150,124 +135,39 @@ local bossColors = {
 	{0.521, 0.600, 0.000}, -- green
 }
 
--- Eco value calculation
-local isObject = {}
-for udefID, def in ipairs(UnitDefs) do
-	if def.modCategories['object'] or def.customParams.objectify then
-		isObject[udefID] = true
-	end
-end
-
-local function EcoValueDef(unitDef)
-	if (unitDef.canMove and not (unitDef.customParams and unitDef.customParams.iscommander)) or isObject[unitDef.name] then
-		return 0
-	end
-
-	local ecoValue = 1
-	if unitDef.energyMake then
-		ecoValue = ecoValue + unitDef.energyMake
-	end
-	if unitDef.energyUpkeep and unitDef.energyUpkeep < 0 then
-		ecoValue = ecoValue - unitDef.energyUpkeep
-	end
-	if unitDef.windGenerator then
-		ecoValue = ecoValue + unitDef.windGenerator * 0.75
-	end
-	if unitDef.tidalGenerator then
-		ecoValue = ecoValue + unitDef.tidalGenerator * 15
-	end
-	if unitDef.extractsMetal and unitDef.extractsMetal > 0 then
-		ecoValue = ecoValue + 200
-	end
-
-	if unitDef.customParams then
-		if unitDef.customParams.energyconv_capacity then
-			ecoValue = ecoValue + tonumber(unitDef.customParams.energyconv_capacity) / 2
-		end
-		if unitDef.customParams.decoyfor == 'armfus' then
-			ecoValue = ecoValue + 1000
-		end
-		if unitDef.customParams.techlevel and tonumber(unitDef.customParams.techlevel) > 1 then
-			ecoValue = ecoValue * tonumber(unitDef.customParams.techlevel) * 2
-		end
-		if unitDef.customParams.unitgroup == 'antinuke' or unitDef.customParams.unitgroup == 'nuke' then
-			ecoValue = 1000
-		end
-	end
-
-	return ecoValue
-end
-
-local defIDsEcoValues = {}
-for unitDefID, unitDef in pairs(UnitDefs) do
-	local ecoValue = EcoValueDef(unitDef) or 0
-	if ecoValue > 0 then
-		defIDsEcoValues[unitDefID] = ecoValue
-	end
-end
-
-local playerEcoAttractionsRaw = {}
-
 --------------------------------------------------------------------------------
 -- Utility Functions
 --------------------------------------------------------------------------------
 local function updateUIScale()
 	-- Calculate screen scale based on resolution
 	screenScale = (0.75 + (vsx * vsy / 10000000))
-
-	-- Apply screen scale to get final UI scale
 	uiScale = screenScale
 
 	-- Update scaled dimensions
 	scaledWidth = CONFIG.PANEL_WIDTH * uiScale
 	scaledHeight = dynamicPanelHeight * uiScale
 
-	-- Update font sizes (use base config values, not accumulated)
+	-- Update font sizes
 	fontSize = CONFIG.FONT_SIZE * uiScale
 	smallFontSize = CONFIG.SMALL_FONT_SIZE * uiScale
+
+	-- Cache all scaled dimensions
+	scaled.headerHeight = CONFIG.HEADER_HEIGHT * uiScale
+	scaled.statusHeight = CONFIG.STATUS_HEIGHT * uiScale
+	scaled.tabHeight = CONFIG.TAB_HEIGHT * uiScale
+	scaled.padding = CONFIG.PADDING * uiScale
+	scaled.rowSpacing = CONFIG.ROW_SPACING * uiScale
+	scaled.lineSpacing = CONFIG.LINE_SPACING * uiScale
+	scaled.smallFontSize = smallFontSize
+	scaled.fontSize = fontSize
 end
 
-local function getPlayerName(teamID)
-	-- Return cached name if available
-	if cachedPlayerNames[teamID] then
-		return cachedPlayerNames[teamID]
-	end
-
-	local playerName = ''
-	local playerList = Spring.GetPlayerList(teamID)
-
-	if playerList and #playerList > 0 then
-		if #playerList == 1 then
-			playerName = select(1, Spring.GetPlayerInfo(playerList[1]))
-		else
-			-- Multiple players on same team
-			local names = {}
-			for _, player in ipairs(playerList) do
-				if player then
-					local name = select(1, Spring.GetPlayerInfo(player))
-					if name then
-						names[#names + 1] = name
-					end
-				end
-			end
-			playerName = table.concat(names, ' & ')
-		end
-	else
-		-- Try AI name
-		_, playerName = Spring.GetAIInfo(teamID)
-	end
-
-	-- Cache the name
-	if playerName and playerName ~= '' then
-		cachedPlayerNames[teamID] = playerName
-	end
-
-	return playerName or ''
-end
-
--- Use raptor_harmony's time formatter for consistency
-local function FormatTime(seconds)
-	return HarmonyRaptor.formatGraceTime(seconds)
+local function updateLayout()
+	layout.headerY = panelY + scaledHeight - scaled.headerHeight
+	layout.statusY = layout.headerY - scaled.statusHeight
+	layout.tabY = layout.statusY - scaled.tabHeight
+	layout.contentY = panelY
+	layout.contentStartY = layout.tabY - scaled.padding - fontSize
 end
 
 local function FormatNumber(num)
@@ -280,24 +180,36 @@ local function FormatNumber(num)
 	end
 end
 
+local function getRowHeight()
+	return smallFontSize + (4 * uiScale) + scaled.rowSpacing
+end
+
+local function getThreatColor(multiplier)
+	if multiplier > CONFIG.THREAT_HIGH then
+		return COLORS.RED
+	elseif multiplier > CONFIG.THREAT_MED then
+		return COLORS.ORANGE
+	else
+		return COLORS.GREEN
+	end
+end
+
 local function calculateRequiredPanelHeight()
-	-- Count non-raptor/scavenger teams (same logic as UpdatePlayerEcoData)
+	-- Count non-raptor/scavenger teams
 	local playerCount = 0
 	for i = 1, #teamIDs do
 		local teamID = teamIDs[i]
-		local playerName = getPlayerName(teamID)
+		local playerName = Harmony.getPlayerName(teamID)
 		if playerName and playerName ~= '' and not (playerName:find('Raptors') or playerName:find('Scavengers')) then
 			playerCount = playerCount + 1
 		end
 	end
 
-	-- Calculate required content height for this many rows
-	-- Formula: rowHeight = SMALL_FONT_SIZE + 4 + ROW_SPACING = 14 + 4 + 8 = 26
+	-- Calculate required content height
 	local rowHeight = CONFIG.SMALL_FONT_SIZE + 4 + CONFIG.ROW_SPACING
 	local contentHeight = 40 + rowHeight * playerCount
 
 	-- Calculate total panel height
-	-- = HEADER + STATUS + TAB + PADDING*4 + contentHeight
 	local requiredHeight = CONFIG.HEADER_HEIGHT + CONFIG.STATUS_HEIGHT + CONFIG.TAB_HEIGHT + (CONFIG.PADDING * 4) + contentHeight
 
 	-- Use at least the minimum configured height
@@ -318,7 +230,7 @@ local function UpdatePlayerEcoData()
 
 	for i = 1, #teamIDs do
 		local teamID = teamIDs[i]
-		local playerName = getPlayerName(teamID)
+		local playerName = Harmony.getPlayerName(teamID)
 
 		if playerName and playerName ~= '' and not (playerName:find('Raptors') or playerName:find('Scavengers')) then
 			local ecoValue = playerEcoAttractionsRaw[teamID] or 0
@@ -353,85 +265,11 @@ local function UpdatePlayerEcoData()
 end
 
 local function UpdateBossData()
-	local bossInfoRaw = Spring.GetGameRulesParam('pveBossInfo')
-	if not bossInfoRaw then
-		return
-	end
+	bossData = HarmonyRaptor.getBossInfo()
 
-	-- Safely decode JSON with error handling
-	local success, decoded = pcall(Json.decode, bossInfoRaw)
-	if not success or not decoded then
-		Spring.Echo("Raptor Panel: Failed to decode boss info JSON")
-		return
-	end
-
-	bossInfoRaw = decoded
-	bossData = {
-		resistances = {},
-		playerDamages = {},
-		healths = {}
-	}
-
-	-- Process resistances
-	for defID, resistance in pairs(bossInfoRaw.resistances or {}) do
-		if resistance.percent >= 0.1 then
-			local name = UnitDefs[tonumber(defID)].translatedHumanName
-			table.insert(bossData.resistances, {
-				name = name,
-				percent = resistance.percent,
-				damage = resistance.damage
-			})
-		end
-	end
-	table.sort(bossData.resistances, function(a, b) return a.damage > b.damage end)
-
-	-- Process player damages
-	local totalDamage = 0
-	for _, damage in pairs(bossInfoRaw.playerDamages or {}) do
-		totalDamage = totalDamage + damage
-	end
-
-	for teamID, damage in pairs(bossInfoRaw.playerDamages or {}) do
-		local name = getPlayerName(teamID)
-		table.insert(bossData.playerDamages, {
-			name = name,
-			damage = damage,
-			relative = damage / math.max(totalDamage, 1)
-		})
-	end
-	table.sort(bossData.playerDamages, function(a, b) return a.damage > b.damage end)
-
-	-- Process boss healths
-	for queenID, status in pairs(bossInfoRaw.statuses or {}) do
-		if not status.isDead and status.health > 0 then
-			table.insert(bossData.healths, {
-				id = tonumber(queenID),
-				health = status.health,
-				maxHealth = status.maxHealth,
-				percentage = (status.health / status.maxHealth) * 100
-			})
-		end
-	end
-	table.sort(bossData.healths, function(a, b) return a.percentage < b.percentage end)
-
-	-- Assign colors
+	-- Assign colors to boss healths
 	for i, health in ipairs(bossData.healths) do
 		health.color = bossColors[((i - 1) % #bossColors) + 1]
-	end
-end
-
-local function RegisterUnit(unitDefID, unitTeamID)
-	if playerEcoAttractionsRaw[unitTeamID] then
-		local ecoValue = defIDsEcoValues[unitDefID]
-		if ecoValue and ecoValue > 0 then
-			playerEcoAttractionsRaw[unitTeamID] = playerEcoAttractionsRaw[unitTeamID] + ecoValue
-		end
-	end
-end
-
-local function DeregisterUnit(unitDefID, unitTeamID)
-	if playerEcoAttractionsRaw[unitTeamID] then
-		playerEcoAttractionsRaw[unitTeamID] = playerEcoAttractionsRaw[unitTeamID] - (defIDsEcoValues[unitDefID] or 0)
 	end
 end
 
@@ -445,7 +283,7 @@ end
 
 local function DrawText(text, x, y, size, color, align)
 	size = size or fontSize
-	color = color or COLOR_TEXT
+	color = color or COLORS.TEXT_PRIMARY
 	align = align or ""
 
 	font:Begin()
@@ -465,7 +303,7 @@ local function DrawProgressBar(x, y, width, height, percentage, color)
 	end
 
 	-- Border
-	gl.Color(1, 1, 1, 0.3)
+	gl.Color(COLORS.BORDER)
 	gl.LineWidth(1)
 	gl.Shape(GL.LINE_LOOP, {
 		{v = {x, y}},
@@ -475,76 +313,93 @@ local function DrawProgressBar(x, y, width, height, percentage, color)
 	})
 end
 
+local function drawSectionHeader(x, y, title)
+	DrawText(title, x, y, fontSize, COLORS.TEXT_ACCENT)
+	return y - scaled.padding
+end
+
+local function drawTableHeader(x, y, columns)
+	for _, col in ipairs(columns) do
+		DrawText(col.label, x + (col.x * uiScale), y, smallFontSize, COLORS.TEXT_DIM)
+	end
+	y = y - scaled.lineSpacing
+
+	-- Draw separator line
+	gl.Color(COLORS.BORDER)
+	gl.LineWidth(1)
+	gl.Shape(GL.LINES, {
+		{v = {x, y}},
+		{v = {x + scaledWidth - scaled.padding * 2, y}}
+	})
+
+	return y - scaled.lineSpacing
+end
+
 local function drawHeader()
 	local x = panelX
-	local y = panelY + scaledHeight - (CONFIG.HEADER_HEIGHT * uiScale)
-	local headerHeight = CONFIG.HEADER_HEIGHT * uiScale
-	local padding = CONFIG.PADDING * uiScale
+	local y = layout.headerY
 
-	DrawRect(x, y, scaledWidth, headerHeight, COLOR_HEADER)
+	DrawRect(x, y, scaledWidth, scaled.headerHeight, COLORS.BG_HEADER)
 
 	-- Title
 	local title = "RAPTOR PANEL"
-	DrawText(title, x + padding, y + (headerHeight - fontSize) / 2, fontSize, COLOR_TEXT)
+	DrawText(title, x + scaled.padding, y + (scaled.headerHeight - fontSize) / 2, fontSize, COLORS.TEXT_PRIMARY)
 
 	-- Difficulty
 	local difficulty = modOptions.raptor_difficulty or "unknown"
 	local endless = modOptions.raptor_endless and " (Endless)" or ""
 	local diffText = difficulty:upper() .. endless
-	local diffX = x + scaledWidth - padding
-	DrawText(diffText, diffX, y + (headerHeight - smallFontSize) / 2, smallFontSize, CONFIG.COLOR_DIFFICULTY, "ro")
+	local diffX = x + scaledWidth - scaled.padding
+	DrawText(diffText, diffX, y + (scaled.headerHeight - smallFontSize) / 2, smallFontSize, COLORS.BLUE, "ro")
 end
 
 local function drawStatusPanel()
 	local x = panelX
-	local y = panelY + scaledHeight - (CONFIG.HEADER_HEIGHT * uiScale) - (CONFIG.STATUS_HEIGHT * uiScale)
-	local statusHeight = CONFIG.STATUS_HEIGHT * uiScale
-	local padding = CONFIG.PADDING * uiScale
-	local lineSpacing = CONFIG.LINE_SPACING * uiScale
+	local y = layout.statusY
 
-	DrawRect(x, y, scaledWidth, statusHeight, COLOR_STATUS)
+	DrawRect(x, y, scaledWidth, scaled.statusHeight, COLORS.BG_HEADER)
 
 	local stage = HarmonyRaptor.getRaptorStage()
-	local textY = y + statusHeight - padding - fontSize
+	local textY = y + scaled.statusHeight - scaled.padding - fontSize
 
 	if HarmonyRaptor.isInGracePeriod() then
 		-- Grace Period
 		local remaining = HarmonyRaptor.getGraceTimeRemaining()
 		local labelText = "Grace Period Remaining:"
-		DrawText(labelText, x + padding, textY, fontSize, CONFIG.COLOR_GRACE)
+		DrawText(labelText, x + scaled.padding, textY, fontSize, COLORS.GREEN)
 
 		-- Align timer on the same line, right side
-		local timerText = FormatTime(remaining)
-		local timerX = x + scaledWidth - padding
-		DrawText(timerText, timerX, textY, fontSize, COLOR_TEXT, "ro")
-		textY = textY - fontSize - lineSpacing
+		local timerText = HarmonyRaptor.formatGraceTime(remaining)
+		local timerX = x + scaledWidth - scaled.padding
+		DrawText(timerText, timerX, textY, fontSize, COLORS.TEXT_PRIMARY, "ro")
+		textY = textY - fontSize - scaled.lineSpacing
 
 	elseif stage == "main" then
 		-- Queen Anger Phase
 		local anger = HarmonyRaptor.getQueenHatchProgress()
 		local techAnger = HarmonyRaptor.getTechAnger()
-		DrawText(string.format("Queen Anger: %d%% (%d%% Evolution)", anger, techAnger), x + padding, textY, fontSize, CONFIG.COLOR_ANGER)
-		textY = textY - fontSize - lineSpacing
+		DrawText(string.format("Queen Anger: %d%% (%d%% Evolution)", anger, techAnger), x + scaled.padding, textY, fontSize, COLORS.ORANGE)
+		textY = textY - fontSize - scaled.lineSpacing
 
 		-- ETA
 		local eta = HarmonyRaptor.getQueenETA()
-		DrawText("ETA: " .. FormatTime(eta), x + padding, textY, fontSize, COLOR_TEXT)
-		textY = textY - fontSize - lineSpacing
+		DrawText("ETA: " .. HarmonyRaptor.formatGraceTime(eta), x + scaled.padding, textY, fontSize, COLORS.TEXT_PRIMARY)
+		textY = textY - fontSize - scaled.lineSpacing
 
 		-- Anger Rate Breakdown
 		local components = HarmonyRaptor.getAngerComponents()
-		DrawText(string.format("Rate: %.2f/s", components.total), x + padding, textY, smallFontSize, CONFIG.COLOR_SUBTITLE)
-		textY = textY - smallFontSize - lineSpacing
+		DrawText(string.format("Rate: %.2f/s", components.total), x + scaled.padding, textY, smallFontSize, COLORS.TEXT_DIM)
+		textY = textY - smallFontSize - scaled.lineSpacing
 
 		-- Single format string for better performance
 		local breakdownText = string.format("Base: %.2f/s  Eco: %.2f/s  Aggro: %.2f/s",
 			components.base, components.eco, components.aggression)
-		DrawText(breakdownText, x + padding, textY, smallFontSize, CONFIG.COLOR_SUBTITLE)
+		DrawText(breakdownText, x + scaled.padding, textY, smallFontSize, COLORS.TEXT_DIM)
 
 	elseif stage == "boss" then
 		-- Boss Phase
-		DrawText("QUEEN ACTIVE", x + padding, textY, fontSize * 1.2, COLOR_DANGER_HIGH)
-		textY = textY - (fontSize * 1.2) - lineSpacing
+		DrawText("QUEEN ACTIVE", x + scaled.padding, textY, fontSize * 1.2, COLORS.RED)
+		textY = textY - (fontSize * 1.2) - scaled.lineSpacing
 
 		local queenHealth = HarmonyRaptor.getQueenHealth()
 		local queensKilled = HarmonyRaptor.getQueensKilled()
@@ -553,87 +408,69 @@ local function drawStatusPanel()
 			statusString = statusString .. string.format(", Killed: %d/%d", queensKilled, nBosses)
 		end
 
-		DrawText(statusString, x + padding, textY, fontSize, COLOR_TEXT)
-		textY = textY - lineSpacing
-		DrawProgressBar(x + padding, textY - (20 * uiScale), scaledWidth - padding * 2, 18 * uiScale, queenHealth, COLOR_BOSS_HEALTH)
+		DrawText(statusString, x + scaled.padding, textY, fontSize, COLORS.TEXT_PRIMARY)
+		textY = textY - scaled.lineSpacing
+		DrawProgressBar(x + scaled.padding, textY - (20 * uiScale), scaledWidth - scaled.padding * 2, 18 * uiScale, queenHealth, COLORS.RED)
 		textY = textY - (25 * uiScale)
 	end
 end
 
 local function drawTabs()
 	local x = panelX
-	local y = panelY + scaledHeight - (CONFIG.HEADER_HEIGHT * uiScale) - (CONFIG.STATUS_HEIGHT * uiScale) - (CONFIG.TAB_HEIGHT * uiScale)
-	local tabHeight = CONFIG.TAB_HEIGHT * uiScale
+	local y = layout.tabY
 
 	local tabWidth = scaledWidth / 3
 	local tabs = {"ECONOMY", "DAMAGE", "QUEENS"}
 
 	for i, tabName in ipairs(tabs) do
 		local tabX = x + (i - 1) * tabWidth
-		local color = (i == currentTab) and COLOR_TAB_ACTIVE or COLOR_TAB_INACTIVE
+		local color = (i == currentTab) and COLORS.BG_ACTIVE or COLORS.BG_HEADER
 
-		DrawRect(tabX, y, tabWidth, tabHeight, color)
+		DrawRect(tabX, y, tabWidth, scaled.tabHeight, color)
 
 		-- Tab border
-		gl.Color(CONFIG.COLOR_BORDER)
+		gl.Color(COLORS.BORDER)
 		gl.LineWidth(1)
 		gl.Shape(GL.LINE_LOOP, {
 			{v = {tabX, y}},
 			{v = {tabX + tabWidth, y}},
-			{v = {tabX + tabWidth, y + tabHeight}},
-			{v = {tabX, y + tabHeight}}
+			{v = {tabX + tabWidth, y + scaled.tabHeight}},
+			{v = {tabX, y + scaled.tabHeight}}
 		})
 
-		DrawText(tabName, tabX + tabWidth / 2, y + tabHeight / 2, fontSize, COLOR_TEXT, "cvo")
+		DrawText(tabName, tabX + tabWidth / 2, y + scaled.tabHeight / 2, fontSize, COLORS.TEXT_PRIMARY, "cvo")
 	end
 end
 
 local function drawEconomyTab()
-	local padding = CONFIG.PADDING * uiScale
-	local x = panelX + padding
-	local y = panelY + scaledHeight - (CONFIG.HEADER_HEIGHT * uiScale) - (CONFIG.STATUS_HEIGHT * uiScale) - (CONFIG.TAB_HEIGHT * uiScale) - padding - fontSize
+	local x = panelX + scaled.padding
+	local y = layout.contentStartY
 
 	-- Header
-	DrawText("Player Eco Attractions", x, y, fontSize, CONFIG.COLOR_HEADER_TEXT)
-	y = y - (CONFIG.SECTION_SPACING * uiScale)
+	y = drawSectionHeader(x, y, "Player Eco Attractions")
 
-	if not playerEcoData or next(playerEcoData) == nil then
-		y = y - fontSize - (CONFIG.SECTION_SPACING * uiScale)
-		DrawText("No economy data yet", x, y, smallFontSize, CONFIG.COLOR_MUTED)
+	if #playerEcoData == 0 then
+		y = y - fontSize - scaled.padding
+		DrawText("No economy data yet", x, y, smallFontSize, COLORS.TEXT_DIM)
 	else
 		-- Table header
 		y = y - smallFontSize
-		DrawText("Player", x + (CONFIG.ECO_COL_PLAYER * uiScale), y, smallFontSize, CONFIG.COLOR_SUBTITLE)
-		DrawText("Mult", x + (CONFIG.ECO_COL_MULT * uiScale), y, smallFontSize, CONFIG.COLOR_SUBTITLE)
-		DrawText("Share", x + (CONFIG.ECO_COL_SHARE * uiScale), y, smallFontSize, CONFIG.COLOR_SUBTITLE)
-		y = y - (CONFIG.LINE_SPACING * uiScale)
-
-		-- Draw line
-		gl.Color(CONFIG.COLOR_LINE)
-		gl.LineWidth(1)
-		gl.Shape(GL.LINES, {
-			{v = {x, y}},
-			{v = {x + scaledWidth - padding * 2, y}}
+		y = drawTableHeader(x, y, {
+			{label = "Player", x = CONFIG.ECO_COL_PLAYER},
+			{label = "Mult", x = CONFIG.ECO_COL_MULT},
+			{label = "Share", x = CONFIG.ECO_COL_SHARE}
 		})
-		y = y - (CONFIG.LINE_SPACING * uiScale)
 
 		-- Rows
 		local tabContentHeight = (dynamicPanelHeight - CONFIG.HEADER_HEIGHT - CONFIG.STATUS_HEIGHT - CONFIG.TAB_HEIGHT - (CONFIG.PADDING * 4)) * uiScale
-		local rowTotalHeight = smallFontSize + (4 * uiScale)
-		local rowHeight = rowTotalHeight + (CONFIG.ROW_SPACING * uiScale)
+		local rowTotalHeight = getRowHeight() - scaled.rowSpacing
+		local rowHeight = getRowHeight()
 		local maxRows = math.floor((tabContentHeight - (40 * uiScale)) / rowHeight)
+
 		for i, data in ipairs(playerEcoData) do
 			if i > maxRows then break end
 
-			-- Determine color based on multiplier
-			local color
-			if data.multiplier and data.multiplier > CONFIG.THREAT_HIGH then
-				color = COLOR_DANGER_HIGH
-			elseif data.multiplier and data.multiplier > CONFIG.THREAT_MED then
-				color = COLOR_DANGER_MED
-			else
-				color = COLOR_DANGER_LOW
-			end
+			local color = getThreatColor(data.multiplier)
 
 			-- Position row
 			y = y - rowTotalHeight
@@ -641,7 +478,7 @@ local function drawEconomyTab()
 
 			-- Background highlight for current player
 			if data.isMe then
-				DrawRect(x, y, scaledWidth - padding * 2, rowTotalHeight, CONFIG.COLOR_HIGHLIGHT)
+				DrawRect(x, y, scaledWidth - scaled.padding * 2, rowTotalHeight, COLORS.BG_HIGHLIGHT)
 			end
 
 			-- Player name
@@ -656,50 +493,41 @@ local function drawEconomyTab()
 
 			-- Progress bar
 			local barX = x + (CONFIG.ECO_COL_BAR * uiScale)
-			local barWidth = scaledWidth - padding * 2 - (CONFIG.ECO_COL_BAR * uiScale)
+			local barWidth = scaledWidth - scaled.padding * 2 - (CONFIG.ECO_COL_BAR * uiScale)
 			DrawProgressBar(barX, y, barWidth, rowTotalHeight, data.percentage, color)
 
-			y = y - (CONFIG.ROW_SPACING * uiScale)
+			y = y - scaled.rowSpacing
 		end
 	end
 end
 
 local function drawDamageTab()
-	local padding = CONFIG.PADDING * uiScale
-	local x = panelX + padding
-	local y = panelY + scaledHeight - (CONFIG.HEADER_HEIGHT * uiScale) - (CONFIG.STATUS_HEIGHT * uiScale) - (CONFIG.TAB_HEIGHT * uiScale) - padding - fontSize
+	local x = panelX + scaled.padding
+	local y = layout.contentStartY
 
 	-- Header
-	DrawText("Player Damage to Queens", x, y, fontSize, CONFIG.COLOR_HEADER_TEXT)
-	y = y - (CONFIG.SECTION_SPACING * uiScale)
+	y = drawSectionHeader(x, y, "Player Damage to Queens")
 
-	if not #bossData.playerDamages or #bossData.playerDamages == 0 then
-		y = y - fontSize - (CONFIG.SECTION_SPACING * uiScale)
-		DrawText("No damage data yet", x, y, smallFontSize, CONFIG.COLOR_MUTED)
+	if #bossData.playerDamages == 0 then
+		y = y - fontSize - scaled.padding
+		DrawText("No damage data yet", x, y, smallFontSize, COLORS.TEXT_DIM)
 	else
 		-- Table header
 		y = y - smallFontSize
-		DrawText("Rank", x + (CONFIG.DMG_COL_RANK * uiScale), y, smallFontSize, CONFIG.COLOR_SUBTITLE)
-		DrawText("Player", x + (CONFIG.DMG_COL_PLAYER * uiScale), y, smallFontSize, CONFIG.COLOR_SUBTITLE)
-		DrawText("Damage", x + (CONFIG.DMG_COL_DAMAGE * uiScale), y, smallFontSize, CONFIG.COLOR_SUBTITLE)
-		DrawText("Rel", x + (CONFIG.DMG_COL_RELATIVE * uiScale), y, smallFontSize, CONFIG.COLOR_SUBTITLE)
-		y = y - (CONFIG.LINE_SPACING * uiScale)
-
-		-- Draw line
-		gl.Color(CONFIG.COLOR_LINE)
-		gl.LineWidth(1)
-		gl.Shape(GL.LINES, {
-			{v = {x, y}},
-			{v = {x + scaledWidth - padding * 2, y}}
+		y = drawTableHeader(x, y, {
+			{label = "Rank", x = CONFIG.DMG_COL_RANK},
+			{label = "Player", x = CONFIG.DMG_COL_PLAYER},
+			{label = "Damage", x = CONFIG.DMG_COL_DAMAGE},
+			{label = "Rel", x = CONFIG.DMG_COL_RELATIVE}
 		})
-		y = y - (CONFIG.LINE_SPACING * uiScale)
 
 		-- Rows
 		local medals = {"#1", "#2", "#3"}
 		local tabContentHeight = (dynamicPanelHeight - CONFIG.HEADER_HEIGHT - CONFIG.STATUS_HEIGHT - CONFIG.TAB_HEIGHT - (CONFIG.PADDING * 4)) * uiScale
-		local rowTotalHeight = smallFontSize + (4 * uiScale)
-		local rowHeight = rowTotalHeight + (CONFIG.ROW_SPACING * uiScale)
+		local rowTotalHeight = getRowHeight() - scaled.rowSpacing
+		local rowHeight = getRowHeight()
 		local maxRows = math.floor((tabContentHeight - (40 * uiScale)) / rowHeight)
+
 		for i, data in ipairs(bossData.playerDamages) do
 			if i > maxRows then break end
 
@@ -709,41 +537,39 @@ local function drawDamageTab()
 
 			-- Medal or rank number
 			local rankText = medals[i] or ("#" .. tostring(i))
-			DrawText(rankText, x + (CONFIG.DMG_COL_RANK * uiScale), textY, smallFontSize, COLOR_TEXT)
+			DrawText(rankText, x + (CONFIG.DMG_COL_RANK * uiScale), textY, smallFontSize, COLORS.TEXT_PRIMARY)
 
 			-- Player name
-			DrawText(data.name, x + (CONFIG.DMG_COL_PLAYER * uiScale), textY, smallFontSize, COLOR_TEXT)
+			DrawText(data.name, x + (CONFIG.DMG_COL_PLAYER * uiScale), textY, smallFontSize, COLORS.TEXT_PRIMARY)
 
 			-- Damage
-			DrawText(FormatNumber(data.damage), x + (CONFIG.DMG_COL_DAMAGE * uiScale), textY, smallFontSize, CONFIG.COLOR_DAMAGE_VALUE)
+			DrawText(FormatNumber(data.damage), x + (CONFIG.DMG_COL_DAMAGE * uiScale), textY, smallFontSize, COLORS.BLUE)
 
 			-- Relative
-			DrawText(string.format("%.1fX", data.relative), x + (CONFIG.DMG_COL_RELATIVE * uiScale), textY, smallFontSize, CONFIG.COLOR_DAMAGE_RELATIVE)
+			DrawText(string.format("%.1fX", data.relative), x + (CONFIG.DMG_COL_RELATIVE * uiScale), textY, smallFontSize, COLORS.BLUE)
 
-			y = y - (CONFIG.ROW_SPACING * uiScale)
+			y = y - scaled.rowSpacing
 		end
 	end
 end
 
 local function drawBossTab()
-	local padding = CONFIG.PADDING * uiScale
-	local x = panelX + padding
-	local y = panelY + scaledHeight - (CONFIG.HEADER_HEIGHT * uiScale) - (CONFIG.STATUS_HEIGHT * uiScale) - (CONFIG.TAB_HEIGHT * uiScale) - padding - fontSize
+	local x = panelX + scaled.padding
+	local y = layout.contentStartY
 
 	-- Header
-	DrawText("Queen Health Status", x, y, fontSize, CONFIG.COLOR_HEADER_TEXT)
-	y = y - (CONFIG.SECTION_SPACING * uiScale)
+	y = drawSectionHeader(x, y, "Queen Health Status")
 
-	if not #bossData.healths or not #bossData.resistances or (#bossData.healths == 0 and #bossData.resistances == 0) then
-		y = y - fontSize - (CONFIG.SECTION_SPACING * uiScale)
-		DrawText("No boss data yet", x, y, smallFontSize, CONFIG.COLOR_MUTED)
+	if #bossData.healths == 0 and #bossData.resistances == 0 then
+		y = y - fontSize - scaled.padding
+		DrawText("No boss data yet", x, y, smallFontSize, COLORS.TEXT_DIM)
 	else
 		-- Boss Health Status (Horizontal Flow)
 		if #bossData.healths > 0 then
 			-- Display up to configured max bosses in horizontal flow
 			local maxBosses = math.min(CONFIG.MAX_BOSS_DISPLAY, #bossData.healths)
 			local rowX = x + (CONFIG.ECO_COL_PLAYER * uiScale)
-			local maxRowWidth = scaledWidth - padding * 2 - (CONFIG.ECO_COL_PLAYER * uiScale)
+			local maxRowWidth = scaledWidth - scaled.padding * 2 - (CONFIG.ECO_COL_PLAYER * uiScale)
 			local lineHeight = smallFontSize + (6 * uiScale)
 
 			y = y - smallFontSize
@@ -754,7 +580,7 @@ local function drawBossTab()
 				local health = bossData.healths[i]
 				local healthText = string.format("%.0f%%", health.percentage)
 				local textWidth = font:GetTextWidth(healthText) * smallFontSize
-				local itemWidth = textWidth + (CONFIG.LINE_SPACING * uiScale)
+				local itemWidth = textWidth + scaled.lineSpacing
 
 				-- Check if we need to wrap to next line
 				if rowX + itemWidth > x + maxRowWidth and rowX > x + (CONFIG.ECO_COL_PLAYER * uiScale) then
@@ -762,8 +588,12 @@ local function drawBossTab()
 					rowX = x + (CONFIG.ECO_COL_PLAYER * uiScale)
 				end
 
-				-- Draw the health percentage with color (without nested Begin/End)
-				font:SetTextColor(health.color[1], health.color[2], health.color[3], 1)
+				-- Draw the health percentage with color
+				if health.color then
+					font:SetTextColor(health.color[1], health.color[2], health.color[3], 1)
+				else
+					font:SetTextColor(1, 1, 1, 1)
+				end
 				font:Print(healthText, rowX, y, smallFontSize, "o")
 
 				rowX = rowX + itemWidth
@@ -771,29 +601,21 @@ local function drawBossTab()
 			font:SetTextColor(1, 1, 1, 1) -- Reset to default color
 			font:End()
 
-			y = y - (lineHeight - smallFontSize) - (CONFIG.SECTION_SPACING * uiScale * 2)
+			y = y - (lineHeight - smallFontSize) - (scaled.padding * 2)
 		end
 
 		-- Resistances
 		if #bossData.resistances > 0 then
-			DrawText(string.format("Resistances (Top %d)", CONFIG.MAX_RESISTANCE_DISPLAY), x, y, fontSize, CONFIG.COLOR_HEADER_TEXT)
-			y = y - (CONFIG.SECTION_SPACING * uiScale)
+			DrawText(string.format("Resistances (Top %d)", CONFIG.MAX_RESISTANCE_DISPLAY), x, y, fontSize, COLORS.TEXT_ACCENT)
+			y = y - scaled.padding
 
 			-- Table header
 			y = y - smallFontSize
-			DrawText("Unit", x + (CONFIG.BOSS_COL_UNIT * uiScale), y, smallFontSize, CONFIG.COLOR_SUBTITLE)
-			DrawText("Resist", x + (CONFIG.BOSS_COL_RESIST * uiScale), y, smallFontSize, CONFIG.COLOR_SUBTITLE)
-			DrawText("Damage", x + (CONFIG.BOSS_COL_DAMAGE * uiScale), y, smallFontSize, CONFIG.COLOR_SUBTITLE)
-			y = y - (CONFIG.LINE_SPACING * uiScale)
-
-			-- Draw line
-			gl.Color(CONFIG.COLOR_LINE)
-			gl.LineWidth(1)
-			gl.Shape(GL.LINES, {
-				{v = {x, y}},
-				{v = {x + scaledWidth - padding * 2, y}}
+			y = drawTableHeader(x, y, {
+				{label = "Unit", x = CONFIG.BOSS_COL_UNIT},
+				{label = "Resist", x = CONFIG.BOSS_COL_RESIST},
+				{label = "Damage", x = CONFIG.BOSS_COL_DAMAGE}
 			})
-			y = y - (CONFIG.LINE_SPACING * uiScale)
 
 			-- Resistance rows
 			local rowTotalHeight = smallFontSize + (4 * uiScale)
@@ -804,11 +626,11 @@ local function drawBossTab()
 				y = y - rowTotalHeight
 				local textY = y + (rowTotalHeight - smallFontSize) / 2
 
-				DrawText(resistance.name, x + (CONFIG.BOSS_COL_UNIT * uiScale), textY, smallFontSize, COLOR_TEXT)
-				DrawText(string.format("%.0f%%", resistance.percent * 100), x + (CONFIG.BOSS_COL_RESIST * uiScale), textY, smallFontSize, CONFIG.COLOR_RESISTANCE)
-				DrawText(FormatNumber(resistance.damage), x + (CONFIG.BOSS_COL_DAMAGE * uiScale), textY, smallFontSize, CONFIG.COLOR_SUBTITLE)
+				DrawText(resistance.name, x + (CONFIG.BOSS_COL_UNIT * uiScale), textY, smallFontSize, COLORS.TEXT_PRIMARY)
+				DrawText(string.format("%.0f%%", resistance.percent * 100), x + (CONFIG.BOSS_COL_RESIST * uiScale), textY, smallFontSize, COLORS.RED)
+				DrawText(FormatNumber(resistance.damage), x + (CONFIG.BOSS_COL_DAMAGE * uiScale), textY, smallFontSize, COLORS.TEXT_DIM)
 
-				y = y - (CONFIG.ROW_SPACING * uiScale)
+				y = y - scaled.rowSpacing
 			end
 		end
 	end
@@ -816,11 +638,11 @@ end
 
 local function drawTabContent()
 	local x = panelX
-	local y = panelY
-	local contentY = scaledHeight - (CONFIG.HEADER_HEIGHT * uiScale) - (CONFIG.STATUS_HEIGHT * uiScale) - (CONFIG.TAB_HEIGHT * uiScale)
+	local y = layout.contentY
+	local contentHeight = scaledHeight - scaled.headerHeight - scaled.statusHeight - scaled.tabHeight
 
 	-- Content background
-	DrawRect(x, y, scaledWidth, contentY, COLOR_BG)
+	DrawRect(x, y, scaledWidth, contentHeight, COLORS.BG_PANEL)
 
 	if currentTab == 1 then
 		drawEconomyTab()
@@ -845,16 +667,18 @@ function widget:Initialize()
 
 	panelX = vsx - scaledWidth - (CONFIG.PANEL_MARGIN_X * uiScale)
 	panelY = vsy - scaledHeight - (CONFIG.PANEL_MARGIN_Y * uiScale)
+	updateLayout()
 
 	-- Get font with error handling
 	if WG['fonts'] and WG['fonts'].getFont then
 		font = WG['fonts'].getFont()
 	else
 		Spring.Echo("Raptor Panel: Warning - Font system not available")
-		return false
+		widgetHandler:RemoveWidget()
+		return
 	end
 
-	-- Initialize team data using raptor_harmony
+	-- Initialize team data
 	raptorsTeamID = HarmonyRaptor.getRaptorsTeamID()
 	local playerTeams = HarmonyRaptor.getPlayerTeams()
 
@@ -864,6 +688,9 @@ function widget:Initialize()
 		playerEcoAttractionsRaw[playerTeams[i]] = 0
 	end
 
+	-- Initialize eco value cache
+	HarmonyRaptor.initEcoValueCache()
+
 	-- Register existing units
 	local allUnits = Spring.GetAllUnits()
 	for i = 1, #allUnits do
@@ -871,12 +698,13 @@ function widget:Initialize()
 		local unitDefID = Spring.GetUnitDefID(unitID)
 		local unitTeamID = Spring.GetUnitTeam(unitID)
 		if unitTeamID ~= raptorsTeamID then
-			RegisterUnit(unitDefID, unitTeamID)
+			HarmonyRaptor.updatePlayerEcoValues(playerEcoAttractionsRaw, unitDefID, unitTeamID, true)
 		end
 	end
 
 	UpdateGameInfo()
 	UpdatePlayerEcoData()
+	UpdateBossData()
 end
 
 function widget:Shutdown()
@@ -886,24 +714,27 @@ end
 function widget:ViewResize()
 	vsx, vsy = Spring.GetViewGeometry()
 	updateUIScale()
-	initialScaleSet = true  -- Mark as set after resize
+	initialScaleSet = true
 
 	-- Keep panel in view
 	panelX = math.min(panelX, vsx - scaledWidth)
 	panelY = math.min(panelY, vsy - scaledHeight)
 	panelX = math.max(0, panelX)
 	panelY = math.max(0, panelY)
+
+	updateLayout()
 end
 
 function widget:DrawScreen()
 	if not font then return end
 
-	-- Calculate dynamic panel height on first draw (when Spring APIs are ready)
+	-- Calculate dynamic panel height on first draw
 	if not dynamicHeightCalculated then
 		dynamicPanelHeight = calculateRequiredPanelHeight()
 		updateUIScale()
 		panelX = vsx - scaledWidth - (CONFIG.PANEL_MARGIN_X * uiScale)
 		panelY = vsy - scaledHeight - (CONFIG.PANEL_MARGIN_Y * uiScale)
+		updateLayout()
 		dynamicHeightCalculated = true
 	end
 
@@ -913,12 +744,13 @@ function widget:DrawScreen()
 		updateUIScale()
 		panelX = vsx - scaledWidth - (CONFIG.PANEL_MARGIN_X * uiScale)
 		panelY = vsy - scaledHeight - (CONFIG.PANEL_MARGIN_Y * uiScale)
+		updateLayout()
 		initialScaleSet = true
 	end
 
 	gl.PushMatrix()
 
-	-- Use pcall to ensure PopMatrix is always called, even if there's an error
+	-- Use pcall to ensure PopMatrix is always called
 	local success, err = pcall(function()
 		drawTabContent()
 		drawTabs()
@@ -936,9 +768,8 @@ end
 
 function widget:MousePress(x, y, button)
 	-- Check if clicking on tabs
-	local tabY = panelY + scaledHeight - (CONFIG.HEADER_HEIGHT * uiScale) - (CONFIG.STATUS_HEIGHT * uiScale) - (CONFIG.TAB_HEIGHT * uiScale)
-	local tabHeight = CONFIG.TAB_HEIGHT * uiScale
-	if x >= panelX and x <= panelX + scaledWidth and y >= tabY and y <= tabY + tabHeight then
+	local tabY = layout.tabY
+	if x >= panelX and x <= panelX + scaledWidth and y >= tabY and y <= tabY + scaled.tabHeight then
 		local tabWidth = scaledWidth / 3
 		local tabIndex = math.floor((x - panelX) / tabWidth) + 1
 		if tabIndex >= 1 and tabIndex <= 3 then
@@ -948,9 +779,8 @@ function widget:MousePress(x, y, button)
 	end
 
 	-- Check if clicking on header for dragging
-	local headerY = panelY + scaledHeight - (CONFIG.HEADER_HEIGHT * uiScale)
-	local headerHeight = CONFIG.HEADER_HEIGHT * uiScale
-	if x >= panelX and x <= panelX + scaledWidth and y >= headerY and y <= headerY + headerHeight then
+	local headerY = layout.headerY
+	if x >= panelX and x <= panelX + scaledWidth and y >= headerY and y <= headerY + scaled.headerHeight then
 		isDragging = true
 		dragOffsetX = x - panelX
 		dragOffsetY = y - panelY
@@ -974,6 +804,8 @@ function widget:MouseMove(x, y, dx, dy)
 		panelX = math.max(0, math.min(panelX, vsx - scaledWidth))
 		panelY = math.max(0, math.min(panelY, vsy - scaledHeight))
 
+		updateLayout()
+
 		return true
 	end
 	return false
@@ -988,14 +820,14 @@ function widget:GameFrame(n)
 end
 
 function widget:UnitCreated(unitID, unitDefID, unitTeamID)
-	RegisterUnit(unitDefID, unitTeamID)
+	HarmonyRaptor.updatePlayerEcoValues(playerEcoAttractionsRaw, unitDefID, unitTeamID, true)
 end
 
 function widget:UnitGiven(unitID, unitDefID, unitTeam, oldTeam)
-	RegisterUnit(unitDefID, unitTeam)
-	DeregisterUnit(unitDefID, oldTeam)
+	HarmonyRaptor.updatePlayerEcoValues(playerEcoAttractionsRaw, unitDefID, unitTeam, true)
+	HarmonyRaptor.updatePlayerEcoValues(playerEcoAttractionsRaw, unitDefID, oldTeam, false)
 end
 
 function widget:UnitDestroyed(unitID, unitDefID, unitTeam)
-	DeregisterUnit(unitDefID, unitTeam)
+	HarmonyRaptor.updatePlayerEcoValues(playerEcoAttractionsRaw, unitDefID, unitTeam, false)
 end

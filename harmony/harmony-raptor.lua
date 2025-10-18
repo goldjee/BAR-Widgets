@@ -251,6 +251,79 @@ function harmonyRaptor.getQueensKilled()
 	return gameInfo.raptorQueensKilled
 end
 
+-- Returns boss/queen information including resistances, player damages, and health status
+-- Returns a table with guaranteed structure (empty arrays if no boss data available):
+-- {
+--   resistances = {{name, percent, damage}, ...},
+--   playerDamages = {{name, damage, relative}, ...},
+--   healths = {{id, health, maxHealth, percentage}, ...}
+-- }
+function harmonyRaptor.getBossInfo()
+	local result = {
+		resistances = {},
+		playerDamages = {},
+		healths = {}
+	}
+
+	local bossInfoRaw = Spring.GetGameRulesParam('pveBossInfo')
+	if not bossInfoRaw then
+		return result
+	end
+
+	-- Safely decode JSON with error handling
+	local success, decoded = pcall(Json.decode, bossInfoRaw)
+	if not success or not decoded then
+		Spring.Echo("Harmony Raptor: Failed to decode boss info JSON")
+		return result
+	end
+
+	bossInfoRaw = decoded
+
+	-- Process resistances
+	for defID, resistance in pairs(bossInfoRaw.resistances or {}) do
+		if resistance.percent >= 0.1 then
+			local name = UnitDefs[tonumber(defID)].translatedHumanName
+			table.insert(result.resistances, {
+				name = name,
+				percent = resistance.percent,
+				damage = resistance.damage
+			})
+		end
+	end
+	table.sort(result.resistances, function(a, b) return a.damage > b.damage end)
+
+	-- Process player damages
+	local totalDamage = 0
+	for _, damage in pairs(bossInfoRaw.playerDamages or {}) do
+		totalDamage = totalDamage + damage
+	end
+
+	for teamID, damage in pairs(bossInfoRaw.playerDamages or {}) do
+		local name = harmony.getPlayerName(teamID)
+		table.insert(result.playerDamages, {
+			name = name,
+			damage = damage,
+			relative = damage / math.max(totalDamage, 1)
+		})
+	end
+	table.sort(result.playerDamages, function(a, b) return a.damage > b.damage end)
+
+	-- Process boss healths
+	for queenID, status in pairs(bossInfoRaw.statuses or {}) do
+		if not status.isDead and status.health > 0 then
+			table.insert(result.healths, {
+				id = tonumber(queenID),
+				health = status.health,
+				maxHealth = status.maxHealth,
+				percentage = (status.health / status.maxHealth) * 100
+			})
+		end
+	end
+	table.sort(result.healths, function(a, b) return a.percentage < b.percentage end)
+
+	return result
+end
+
 -- ========================================
 -- Team & Player Utilities
 -- ========================================
@@ -326,6 +399,106 @@ function harmonyRaptor.getAngerComponents()
 		aggression = gameInfo.RaptorQueenAngerGain_Aggression or 0,
 		total = harmonyRaptor.getAngerGainRate()
 	}
+end
+
+-- ========================================
+-- Eco Value Calculation (Raptor Targeting)
+-- ========================================
+
+-- Check if unit is an object (not counted for eco value)
+local isObject = {}
+for udefID, def in ipairs(UnitDefs) do
+	if def.modCategories['object'] or def.customParams.objectify then
+		isObject[udefID] = true
+	end
+end
+
+-- Calculate eco attraction value for a unit definition
+local function calculateEcoValueForDef(unitDef)
+	if (unitDef.canMove and not (unitDef.customParams and unitDef.customParams.iscommander)) or isObject[unitDef.name] then
+		return 0
+	end
+
+	local ecoValue = 1
+	if unitDef.energyMake then
+		ecoValue = ecoValue + unitDef.energyMake
+	end
+	if unitDef.energyUpkeep and unitDef.energyUpkeep < 0 then
+		ecoValue = ecoValue - unitDef.energyUpkeep
+	end
+	if unitDef.windGenerator then
+		ecoValue = ecoValue + unitDef.windGenerator * 0.75
+	end
+	if unitDef.tidalGenerator then
+		ecoValue = ecoValue + unitDef.tidalGenerator * 15
+	end
+	if unitDef.extractsMetal and unitDef.extractsMetal > 0 then
+		ecoValue = ecoValue + 200
+	end
+
+	if unitDef.customParams then
+		if unitDef.customParams.energyconv_capacity then
+			ecoValue = ecoValue + tonumber(unitDef.customParams.energyconv_capacity) / 2
+		end
+		if unitDef.customParams.decoyfor == 'armfus' then
+			ecoValue = ecoValue + 1000
+		end
+		if unitDef.customParams.techlevel and tonumber(unitDef.customParams.techlevel) > 1 then
+			ecoValue = ecoValue * tonumber(unitDef.customParams.techlevel) * 2
+		end
+		if unitDef.customParams.unitgroup == 'antinuke' or unitDef.customParams.unitgroup == 'nuke' then
+			ecoValue = 1000
+		end
+	end
+
+	return ecoValue
+end
+
+-- Cached eco values by unitDefID
+local defIDsEcoValues = nil
+
+-- Initialize eco value cache (call once at startup)
+function harmonyRaptor.initEcoValueCache()
+	if defIDsEcoValues then
+		return defIDsEcoValues
+	end
+
+	defIDsEcoValues = {}
+	for unitDefID, unitDef in pairs(UnitDefs) do
+		local ecoValue = calculateEcoValueForDef(unitDef) or 0
+		if ecoValue > 0 then
+			defIDsEcoValues[unitDefID] = ecoValue
+		end
+	end
+	return defIDsEcoValues
+end
+
+-- Returns eco value for a unit def ID (uses cache)
+function harmonyRaptor.getUnitEcoValue(unitDefID)
+	if not defIDsEcoValues then
+		harmonyRaptor.initEcoValueCache()
+	end
+	return defIDsEcoValues[unitDefID] or 0
+end
+
+-- Update player eco values when units are created/destroyed
+-- playerEcoTable: table of {teamID = ecoValue}
+-- unitDefID: the unit def ID
+-- teamID: the team owning the unit
+-- isAdd: true to add, false to subtract
+function harmonyRaptor.updatePlayerEcoValues(playerEcoTable, unitDefID, teamID, isAdd)
+	if not playerEcoTable[teamID] then
+		return
+	end
+
+	local ecoValue = harmonyRaptor.getUnitEcoValue(unitDefID)
+	if ecoValue > 0 then
+		if isAdd then
+			playerEcoTable[teamID] = playerEcoTable[teamID] + ecoValue
+		else
+			playerEcoTable[teamID] = playerEcoTable[teamID] - ecoValue
+		end
+	end
 end
 
 return harmonyRaptor

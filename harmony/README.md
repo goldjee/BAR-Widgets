@@ -17,7 +17,16 @@ local harmony = VFS.Include('LuaUI/Widgets/harmony/harmony.lua')
 ```
 
 #### Functions
-- **`harmony.getTime()`** - Returns current game time in seconds
+
+**`harmony.getTime()`**
+Returns current game time in seconds.
+
+**`harmony.getPlayerName(teamID)`**
+Returns player or AI name for a given team ID. Uses caching for performance.
+- Returns player name(s) for human players
+- For teams with multiple players, returns names joined with " & "
+- Falls back to AI name if no human players
+- Always returns a string (empty string if no name found)
 
 ---
 
@@ -80,6 +89,35 @@ Returns current queen health percentage (0-100), or 0 if queen not spawned.
 
 **`harmonyRaptor.getQueensKilled()`**
 Returns number of queens killed, or `nil` if not tracked.
+
+**`harmonyRaptor.getBossInfo()`**
+Returns comprehensive boss/queen information with guaranteed structure. Always returns a table with the following fields, even when no boss data is available yet:
+
+```lua
+{
+    resistances = {
+        {name = string, percent = number, damage = number},
+        -- ... sorted by damage dealt (descending)
+    },
+    playerDamages = {
+        {name = string, damage = number, relative = number},
+        -- ... sorted by damage dealt (descending)
+    },
+    healths = {
+        {id = number, health = number, maxHealth = number, percentage = number},
+        -- ... sorted by health percentage (ascending)
+    }
+}
+```
+
+**Features:**
+- Safely parses boss info JSON with error handling
+- Returns empty arrays when boss data not available (before boss spawns)
+- Filters resistances to show only those >= 10%
+- Calculates relative damage as a fraction of total damage
+- Automatically sorts all arrays for easy consumption
+
+**Use Case:** This is the primary function for accessing boss statistics. Use this instead of directly calling `Spring.GetGameRulesParam('pveBossInfo')` to ensure consistent data structure and avoid JSON parsing errors.
 
 #### Mini Boss Detection
 
@@ -152,6 +190,46 @@ Returns `true` if the given unit belongs to the Raptors team.
 **`harmonyRaptor.getPlayerTeams()`**
 Returns list of player team IDs (excluding Raptors/Scavengers/Gaia).
 
+#### Eco Value Calculation (Raptor Targeting)
+
+These functions help calculate "eco attraction" values - how much raptors are attracted to attack a player's units based on their economic value.
+
+**`harmonyRaptor.initEcoValueCache()`**
+Initializes the eco value cache for all unit definitions. Call once during widget initialization for optimal performance.
+
+**`harmonyRaptor.getUnitEcoValue(unitDefID)`**
+Returns the eco attraction value for a unit definition ID. Uses cached values for performance.
+- Higher values = more attractive to raptors
+- Based on energy production, metal extraction, tech level, and special buildings
+- Returns 0 for mobile units (except commanders) and objects
+
+**`harmonyRaptor.updatePlayerEcoValues(playerEcoTable, unitDefID, teamID, isAdd)`**
+Updates player eco values when units are created/destroyed.
+- **playerEcoTable**: table of `{teamID = ecoValue}`
+- **unitDefID**: the unit definition ID
+- **teamID**: the team owning the unit
+- **isAdd**: `true` to add eco value, `false` to subtract
+
+**Example:**
+```lua
+local playerEcoAttractionsRaw = {}
+
+-- Initialize
+for _, teamID in ipairs(harmonyRaptor.getPlayerTeams()) do
+    playerEcoAttractionsRaw[teamID] = 0
+end
+
+-- Track unit creation
+function widget:UnitCreated(unitID, unitDefID, unitTeamID)
+    harmonyRaptor.updatePlayerEcoValues(playerEcoAttractionsRaw, unitDefID, unitTeamID, true)
+end
+
+-- Track unit destruction
+function widget:UnitDestroyed(unitID, unitDefID, unitTeam)
+    harmonyRaptor.updatePlayerEcoValues(playerEcoAttractionsRaw, unitDefID, unitTeam, false)
+end
+```
+
 ## Design Philosophy
 
 Harmony libraries are designed to:
@@ -198,6 +276,19 @@ function widget:GameFrame(n)
     elseif stage == "boss" then
         local health = harmonyRaptor.getQueenHealth()
         Spring.Echo("Queen health: " .. health .. "%")
+
+        -- Get detailed boss information
+        local bossInfo = harmonyRaptor.getBossInfo()
+
+        -- Display player damage rankings
+        if #bossInfo.playerDamages > 0 then
+            Spring.Echo("Top damage dealers:")
+            for i = 1, math.min(3, #bossInfo.playerDamages) do
+                local player = bossInfo.playerDamages[i]
+                Spring.Echo(string.format("  %d. %s - %.0f damage",
+                    i, player.name, player.damage))
+            end
+        end
     end
 end
 ```
