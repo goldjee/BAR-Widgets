@@ -59,11 +59,6 @@ function harmonyRaptor.getRaptorStage()
 	return stage
 end
 
--- Returns time remaining in grace period (in seconds)
-function harmonyRaptor.getGraceElapsedTime()
-    return (((harmony.getTime() - gameInfo.raptorGracePeriod) * -1) - 0.5)
-end
-
 -- Returns queen hatch progress as percentage (0-100)
 function harmonyRaptor.getQueenHatchProgress()
     return math.min(100, math.floor(0.5 + gameInfo.raptorQueenAnger))

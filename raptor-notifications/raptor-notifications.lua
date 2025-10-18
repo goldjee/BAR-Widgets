@@ -1,6 +1,6 @@
 function widget:GetInfo()
 	return {
-		name = 'Raptor Notifications',
+		name = 'Raptor Timing Notifications',
 		desc = 'Shows timing reminders for NuttyB Raptor spawns and aggro',
 		author = 'Insider',
 		date = '27.09.2025',
@@ -51,7 +51,7 @@ function widget:GameFrame(n)
             if not gameStartNotified then
                 notify(gameStartNotification)
                 gameStartNotified = true
-            elseif HarmonyRaptor.getGraceElapsedTime() <= 6 * 60 and not firstWaveNotified then
+            elseif HarmonyRaptor.getGraceTimeRemaining() <= 6 * 60 and not firstWaveNotified then
                 notify(firstWaveNotification)
                 firstWaveNotified = true
             end

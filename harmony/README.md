@@ -64,9 +64,6 @@ Returns current game stage: `"grace"`, `"main"`, or `"boss"`
 **`harmonyRaptor.getGraceTimeRemaining()`**
 Returns time remaining in grace period (in seconds), or 0 if ended.
 
-**`harmonyRaptor.getGraceElapsedTime()`**
-Returns time remaining in grace period with offset adjustment.
-
 **`harmonyRaptor.formatGraceTime(seconds)`**
 Formats time in seconds to human-readable format ("12 minutes", "5m 30s", "45 seconds").
 
