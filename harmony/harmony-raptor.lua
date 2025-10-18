@@ -48,6 +48,7 @@ end
 
 -- Returns current game stage: "grace", "main", or "boss"
 function harmonyRaptor.getRaptorStage()
+	updateRules()
 	local stage = "grace"
 	if harmony.getTime() > gameInfo.raptorGracePeriod then
 		if (gameInfo.raptorQueenAnger < 100) then
@@ -127,6 +128,7 @@ end
 
 -- Returns time remaining in grace period (in seconds), or 0 if grace period has ended
 function harmonyRaptor.getGraceTimeRemaining()
+	updateRules()
 	local remaining = gameInfo.raptorGracePeriod - harmony.getTime()
 	return math.max(0, remaining)
 end
@@ -160,6 +162,7 @@ end
 
 -- Returns current tech anger level (0-100+)
 function harmonyRaptor.getTechAnger()
+	updateRules()
 	return gameInfo.raptorTechAnger or 0
 end
 

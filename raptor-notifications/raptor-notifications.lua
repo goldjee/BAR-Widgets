@@ -32,7 +32,11 @@ local queenHatchNotified100 = false
 
 local function notify(msg)
 	Spring.PlaySoundFile(notificationSound, 1.0, 'ui')
+    if isDebug then
+        Spring.Echo("Raptor Notification: " .. msg)
+    end
     Spring.SendCommands("say a: " .. msg)
+    
 end
 
 function widget:Initialize()
@@ -44,14 +48,14 @@ end
 
 function widget:GameFrame(n)
     if n % 30 == 17 then
-		local gameInfo = HarmonyRaptor.getGameInfo()
         local stage = HarmonyRaptor.getRaptorStage()
 
         if stage == "grace" then
             if not gameStartNotified then
                 notify(gameStartNotification)
                 gameStartNotified = true
-            elseif HarmonyRaptor.getGraceTimeRemaining() <= 6 * 60 and not firstWaveNotified then
+            end
+            if HarmonyRaptor.getGraceTimeRemaining() <= 6 * 60 and not firstWaveNotified then
                 notify(firstWaveNotification)
                 firstWaveNotified = true
             end
@@ -59,7 +63,8 @@ function widget:GameFrame(n)
             if HarmonyRaptor.getQueenHatchProgress() >= 60 and not queenHatchNotified60 then
                 notify(queenHatchNotification60)
                 queenHatchNotified60 = true
-            elseif HarmonyRaptor.getQueenHatchProgress() >= 80 and not queenHatchNotified80 then
+            end
+            if HarmonyRaptor.getQueenHatchProgress() >= 80 and not queenHatchNotified80 then
                 notify(queenHatchNotification80)
                 queenHatchNotified80 = true
             end
