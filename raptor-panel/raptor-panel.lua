@@ -6,7 +6,7 @@ function widget:GetInfo()
 		date = '16.10.2025',
 		layer = 0,
 		enabled = true,
-		version = 2,
+		version = 3,
 	}
 end
 
@@ -216,10 +216,44 @@ local function calculateRequiredPanelHeight()
 	return math.max(CONFIG.PANEL_HEIGHT, requiredHeight)
 end
 
+-- Formats time in seconds to human-readable format ("12 minutes", "5m 30s", "45 seconds")
+-- Replaces removed HarmonyRaptor.formatGraceTime from v1
+local function formatGraceTime(seconds)
+	if seconds <= 0 then
+		return "0 seconds"
+	end
+
+	local minutes = math.floor(seconds / 60)
+	local secs = math.floor(seconds % 60)
+
+	if minutes > 0 and secs > 0 then
+		return minutes .. "m " .. secs .. "s"
+	elseif minutes > 0 then
+		return minutes .. " minute" .. (minutes > 1 and "s" or "")
+	else
+		return secs .. " seconds"
+	end
+end
+
+-- Returns anger gain components from gameInfo table
+-- Replaces removed HarmonyRaptor.getAngerComponents from v1
+local function getAngerComponents()
+	local base = gameInfo.angerGainBase or 0
+	local eco = gameInfo.angerGainEco or 0
+	local aggression = gameInfo.angerGainAggression or 0
+	return {
+		base = base,
+		eco = eco,
+		aggression = aggression,
+		total = base + eco + aggression
+	}
+end
+
 --------------------------------------------------------------------------------
 -- Data Update Functions
 --------------------------------------------------------------------------------
 local function UpdateGameInfo()
+	HarmonyRaptor.updateGameInfo()
 	gameInfo = HarmonyRaptor.getGameInfo()
 end
 
@@ -359,35 +393,35 @@ local function drawStatusPanel()
 
 	DrawRect(x, y, scaledWidth, scaled.statusHeight, COLORS.BG_HEADER)
 
-	local stage = HarmonyRaptor.getRaptorStage()
+	local stage = gameInfo.stage  -- v2: Read from gameInfo table
 	local textY = y + scaled.statusHeight - scaled.padding - fontSize
 
-	if HarmonyRaptor.isInGracePeriod() then
+	if gameInfo.stage == "grace" then  -- v2: Check stage directly
 		-- Grace Period
-		local remaining = HarmonyRaptor.getGraceTimeRemaining()
+		local remaining = gameInfo.gracePeriodRemaining  -- v2: Read from gameInfo table
 		local labelText = "Grace Period Remaining:"
 		DrawText(labelText, x + scaled.padding, textY, fontSize, COLORS.GREEN)
 
 		-- Align timer on the same line, right side
-		local timerText = HarmonyRaptor.formatGraceTime(remaining)
+		local timerText = formatGraceTime(remaining)  -- v2: Use local function
 		local timerX = x + scaledWidth - scaled.padding
 		DrawText(timerText, timerX, textY, fontSize, COLORS.TEXT_PRIMARY, "ro")
 		textY = textY - fontSize - scaled.lineSpacing
 
 	elseif stage == "main" then
 		-- Queen Anger Phase
-		local anger = HarmonyRaptor.getQueenHatchProgress()
-		local techAnger = HarmonyRaptor.getTechAnger()
+		local anger = gameInfo.queenHatchProgress  -- v2: Read from gameInfo table
+		local techAnger = gameInfo.angerTech  -- v2: Read from gameInfo table
 		DrawText(string.format("Queen Anger: %d%% (%d%% Evolution)", anger, techAnger), x + scaled.padding, textY, fontSize, COLORS.ORANGE)
 		textY = textY - fontSize - scaled.lineSpacing
 
 		-- ETA
-		local eta = HarmonyRaptor.getQueenETA()
-		DrawText("ETA: " .. HarmonyRaptor.formatGraceTime(eta), x + scaled.padding, textY, fontSize, COLORS.TEXT_PRIMARY)
+		local eta = HarmonyRaptor.getQueenETA()  -- v2: Still a function (unchanged)
+		DrawText("ETA: " .. formatGraceTime(eta), x + scaled.padding, textY, fontSize, COLORS.TEXT_PRIMARY)  -- v2: Use local function
 		textY = textY - fontSize - scaled.lineSpacing
 
 		-- Anger Rate Breakdown
-		local components = HarmonyRaptor.getAngerComponents()
+		local components = getAngerComponents()  -- v2: Use local function
 		DrawText(string.format("Rate: %.2f/s", components.total), x + scaled.padding, textY, smallFontSize, COLORS.TEXT_DIM)
 		textY = textY - smallFontSize - scaled.lineSpacing
 
@@ -401,8 +435,8 @@ local function drawStatusPanel()
 		DrawText("QUEEN ACTIVE", x + scaled.padding, textY, fontSize * 1.2, COLORS.RED)
 		textY = textY - (fontSize * 1.2) - scaled.lineSpacing
 
-		local queenHealth = HarmonyRaptor.getQueenHealth()
-		local queensKilled = HarmonyRaptor.getQueensKilled()
+		local queenHealth = gameInfo.queenHealth  -- v2: Read from gameInfo table
+		local queensKilled = gameInfo.queenCountKilled  -- v2: Read from gameInfo table (renamed field)
 		local statusString = string.format("Total health: %d%%", queenHealth)
 		if queensKilled and nBosses > 1 then
 			statusString = statusString .. string.format(", Killed: %d/%d", queensKilled, nBosses)
@@ -657,7 +691,7 @@ end
 -- Widget Callbacks
 --------------------------------------------------------------------------------
 function widget:Initialize()
-	if not HarmonyRaptor.isRaptors() then
+	if not Spring.Utilities.Gametype.IsRaptors() then  -- v2: Direct Spring API call
 		widgetHandler:RemoveWidget()
         return
 	end

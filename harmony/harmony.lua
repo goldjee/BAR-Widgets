@@ -11,6 +11,11 @@ function harmony.getTime()
 	return Spring.GetGameSeconds()
 end
 
+-- Returns true if player is spectating or watching a replay
+function harmony.isSpectating()
+	return Spring.GetSpectatingState() or Spring.IsReplay()
+end
+
 -- Returns player or AI name for a given team ID (with caching)
 function harmony.getPlayerName(teamID)
 	-- Return cached name if available

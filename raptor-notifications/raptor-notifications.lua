@@ -6,7 +6,7 @@ function widget:GetInfo()
 		date = '27.09.2025',
 		layer = 0,
 		enabled = true,
-		version = 1,
+		version = 2,
 	}
 end
 
@@ -29,6 +29,13 @@ local queenHatchNotified60 = false
 local queenHatchNotified80 = false
 local queenHatchNotified100 = false
 
+local function isRaptors()
+	return Spring.Utilities.Gametype.IsRaptors()
+end
+
+local function isSpectating()
+	return Spring.GetSpectatingState() or Spring.IsReplay()
+end
 
 local function notify(msg)
 	Spring.PlaySoundFile(notificationSound, 1.0, 'ui')
@@ -40,31 +47,36 @@ local function notify(msg)
 end
 
 function widget:Initialize()
-	if not HarmonyRaptor.isRaptors() or (not isDebug and HarmonyRaptor.isSpectating()) then
+	if not isRaptors() or (not isDebug and isSpectating()) then
 		widgetHandler:RemoveWidget()
         return
 	end
+
+    HarmonyRaptor.updateGameInfo()
 end
 
 function widget:GameFrame(n)
     if n % 30 == 17 then
-        local stage = HarmonyRaptor.getRaptorStage()
+        HarmonyRaptor.updateGameInfo()
+        local gameInfo = HarmonyRaptor.getGameInfo()
+        local stage = gameInfo.stage
+        local gracePeriodRemaining = gameInfo.gracePeriodRemaining
 
         if stage == "grace" then
             if not gameStartNotified then
                 notify(gameStartNotification)
                 gameStartNotified = true
             end
-            if HarmonyRaptor.getGraceTimeRemaining() <= 6 * 60 and not firstWaveNotified then
+            if gracePeriodRemaining <= 6 * 60 and not firstWaveNotified then
                 notify(firstWaveNotification)
                 firstWaveNotified = true
             end
         elseif stage == "main" then
-            if HarmonyRaptor.getQueenHatchProgress() >= 60 and not queenHatchNotified60 then
+            if gracePeriodRemaining >= 60 and not queenHatchNotified60 then
                 notify(queenHatchNotification60)
                 queenHatchNotified60 = true
             end
-            if HarmonyRaptor.getQueenHatchProgress() >= 80 and not queenHatchNotified80 then
+            if gracePeriodRemaining >= 80 and not queenHatchNotified80 then
                 notify(queenHatchNotification80)
                 queenHatchNotified80 = true
             end

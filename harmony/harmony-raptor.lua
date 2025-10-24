@@ -1,73 +1,18 @@
 -- Raptor Harmony - Shared utility library for raptor game mode widgets
--- Usage: local RaptorHarmony = VFS.Include('LuaUI/Widgets/raptor-harmony/harmony-raptor.lua')
+-- Usage: local RaptorHarmony = VFS.Include('LuaUI/Widgets/harmony/harmony-raptor.lua')
 
-local harmonyRaptor = {}
+local hr = {}
+
+-- Definitions
+-- ========================================
 
 local harmony = VFS.Include('LuaUI/Widgets/harmony/harmony.lua')
 
+-- Table containing all the information about the game
 local gameInfo = {}
-local rules = {
-	'raptorDifficulty',
-	'raptorGracePeriod',
-	'scavBossAnger',
-	'raptorQueenAnger',
-	'RaptorQueenAngerGain_Aggression',
-	'RaptorQueenAngerGain_Base',
-	'RaptorQueenAngerGain_Eco',
-	'raptorQueenHealth',
-	'raptorQueensKilled',
-	'raptorQueenTime',
-	'raptorTechAnger',
-}
 local nilDefaultRules = {
 	['raptorQueensKilled'] = true,
 }
-
--- Returns true if current game mode is Raptors
-function harmonyRaptor.isRaptors()
-	return Spring.Utilities.Gametype.IsRaptors()
-end
-
--- Returns true if player is spectating or watching a replay
-function harmonyRaptor.isSpectating()
-	return Spring.GetSpectatingState() or Spring.IsReplay()
-end
-
-local function updateRules()
-	for i = 1, #rules do
-		local rule = rules[i]
-		gameInfo[rule] = Spring.GetGameRulesParam(rule) or (nilDefaultRules[rule] and nil or 0)
-	end
-end
-
--- Updates and returns table containing all raptor game rules
-function harmonyRaptor.getGameInfo()
-	updateRules()
-	return gameInfo
-end
-
--- Returns current game stage: "grace", "main", or "boss"
-function harmonyRaptor.getRaptorStage()
-	updateRules()
-	local stage = "grace"
-	if harmony.getTime() > gameInfo.raptorGracePeriod then
-		if (gameInfo.raptorQueenAnger < 100) then
-			stage = "main"
-		else
-			stage = "boss"
-		end
-	end
-	return stage
-end
-
--- Returns queen hatch progress as percentage (0-100)
-function harmonyRaptor.getQueenHatchProgress()
-    return math.min(100, math.floor(0.5 + gameInfo.raptorQueenAnger))
-end
-
--- ========================================
--- Mini Boss Detection Functions
--- ========================================
 
 -- Mini boss data tables
 local miniBossNames = {
@@ -81,7 +26,6 @@ local miniBossNames = {
 	raptor_consort = "Raptor Consort",
 	raptor_doombringer = "Doombringer",
 }
-
 local miniBossDescriptions = {
 	raptor_miniq_a = "Majestic and bold, ruler of the hunt.",
 	raptor_miniq_b = "Swift and sharp, a noble among raptors.",
@@ -94,133 +38,93 @@ local miniBossDescriptions = {
 	raptor_doombringer = "Your time is up. The Queens called for backup.",
 }
 
--- Returns table with all mini boss definitions
-function harmonyRaptor.getMiniBossInfo()
-	return {
-		names = miniBossNames,
-		descriptions = miniBossDescriptions
-	}
-end
-
--- Returns display name for a mini boss unit (or nil if not a mini boss)
-function harmonyRaptor.getMiniBossName(unitDefName)
-	return miniBossNames[unitDefName]
-end
-
--- Returns description for a mini boss unit (or nil if not a mini boss)
-function harmonyRaptor.getMiniBossDescription(unitDefName)
-	return miniBossDescriptions[unitDefName]
-end
-
--- Returns true if the given unit def name is a mini boss
-function harmonyRaptor.isMiniBoss(unitDefName)
-	return miniBossNames[unitDefName] ~= nil
-end
-
--- Returns true if the given unit def name is a Queenling
-function harmonyRaptor.isQueenling(unitDefName)
-	return unitDefName and (unitDefName:find("raptor_miniq_") ~= nil)
-end
-
--- ========================================
--- Grace Period Utilities
+-- Main game info functions
 -- ========================================
 
--- Returns time remaining in grace period (in seconds), or 0 if grace period has ended
-function harmonyRaptor.getGraceTimeRemaining()
-	updateRules()
-	local remaining = gameInfo.raptorGracePeriod - harmony.getTime()
-	return math.max(0, remaining)
+-- Helper to get game rule from the engine
+local function getGameRule(key)
+	return Spring.GetGameRulesParam(key) or (nilDefaultRules[key] and nil or 0)
 end
 
--- Formats time in seconds to human-readable format ("12 minutes", "5m 30s", "45 seconds")
-function harmonyRaptor.formatGraceTime(seconds)
-	if seconds <= 0 then
-		return "0 seconds"
-	end
+-- Updates the gameInfo table with the latest game rules parameters
+function hr.updateGameInfo()
+    -- Main settings
+	gameInfo.difficulty = getGameRule("raptorDifficulty")
+	gameInfo.gracePeriod = getGameRule("raptorGracePeriod")
+	gameInfo.anger = getGameRule("raptorQueenAnger")
+	gameInfo.angerTech = getGameRule("raptorTechAnger")
+	gameInfo.angerGainAggression = getGameRule("RaptorQueenAngerGain_Aggression")
+	gameInfo.angerGainBase = getGameRule("RaptorQueenAngerGain_Base")
+	gameInfo.angerGainEco = getGameRule("RaptorQueenAngerGain_Eco")
+	gameInfo.queenHealth = getGameRule("raptorQueenHealth")
+	gameInfo.queenCountKilled = getGameRule("raptorQueensKilled")
+	gameInfo.queenTime = getGameRule("raptorQueenTime")
 
-	local minutes = math.floor(seconds / 60)
-	local secs = math.floor(seconds % 60)
+    local modOptions = Spring.GetModOptions()
 
-	if minutes > 0 and secs > 0 then
-		return minutes .. "m " .. secs .. "s"
-	elseif minutes > 0 then
-		return minutes .. " minute" .. (minutes > 1 and "s" or "")
-	else
-		return secs .. " seconds"
-	end
-end
+    -- Queen count
+	gameInfo.queenCount = modOptions.raptor_queen_count or 1
 
--- Returns true if currently in grace period
-function harmonyRaptor.isInGracePeriod()
-	return harmonyRaptor.getRaptorStage() == "grace"
-end
+    -- Current raptor stage: "grace", "main", or "boss"
+    local stage = nil
+    if gameInfo.gracePeriod and gameInfo.anger then
+        stage = "grace"
+        if harmony.getTime() > gameInfo.gracePeriod then
+            if (gameInfo.anger < 100) then
+                stage = "main"
+            else
+                stage = "boss"
+            end
+        end
+    end
+    gameInfo.stage = stage
 
--- ========================================
--- Tech Anger & Threat Detection
--- ========================================
+    -- Time remaining in grace period (in seconds), or 0 if grace period has ended
+    local gracePeriodRemaining = nil
+    if gameInfo.gracePeriod then
+        gracePeriodRemaining = gameInfo.gracePeriod - harmony.getTime()
+	    gameInfo.gracePeriodRemaining = math.max(0, gracePeriodRemaining)
+    end
 
--- Returns current tech anger level (0-100+)
-function harmonyRaptor.getTechAnger()
-	updateRules()
-	return gameInfo.raptorTechAnger or 0
-end
+    -- Queen hatch progress as a percentage (0-100)
+    if gameInfo.anger then
+        gameInfo.queenHatchProgress = math.min(100, math.floor(0.5 + gameInfo.anger))
+    end
 
--- Returns nuke warning level: "none", "warning", or "critical"
--- Based on tech anger thresholds used in gui_raptor_nuke_warning.lua
-function harmonyRaptor.getNukeWarningLevel()
-	local techAnger = harmonyRaptor.getTechAnger()
-	local isScavengers = Spring.Utilities.Gametype.IsScavengers()
-
-	if techAnger < (isScavengers and 50 or 65) then
-		return "none"
-	elseif techAnger < (isScavengers and 85 or 90) then
-		return "warning"
-	else
-		return "critical"
-	end
-end
-
--- Returns true if nuke warning should be displayed (based on nuke warning widget logic)
--- Checks: no anti-nuke, tech anger in warning range, sufficient energy storage
-function harmonyRaptor.shouldShowNukeWarning(hasAntiNuke, teamID)
-	if hasAntiNuke then
-		return false
-	end
-
-	local warningLevel = harmonyRaptor.getNukeWarningLevel()
-	if warningLevel ~= "warning" then
-		return false
-	end
-
-	-- Check if team has enough energy storage to be at risk
-	if teamID then
-		local _, _, _, energyStorage = Spring.GetTeamResources(teamID, 'energy')
-		if energyStorage and energyStorage < 1000 then
-			return false
-		end
-
-		local unitCount = Spring.GetTeamUnitCount(teamID)
-		if unitCount and unitCount <= 3 then
-			return false
+	-- Nuke threat level: "none", "warning", or "critical"
+	local nukeThreatLevel = nil
+	if gameInfo.angerTech then
+		if gameInfo.angerTech < 65 then
+			nukeThreatLevel = "none"
+		elseif gameInfo.angerTech < 90 then
+			nukeThreatLevel = "warning"
+		else
+			nukeThreatLevel = "critical"
 		end
 	end
-
-	return true
+	gameInfo.nukeThreatLevel = nukeThreatLevel
 end
 
--- ========================================
--- Queen/Boss Information
+-- Returns gameInfo table
+function hr.getGameInfo()
+    return gameInfo
+end
+
+-- Utility functions
 -- ========================================
 
--- Returns estimated time until queen spawns (in seconds), or 0 if already spawned
-function harmonyRaptor.getQueenETA()
-	if harmonyRaptor.getRaptorStage() ~= "main" then
-		return 0
+-- Stages of the game and timings
+-- ----------------------------------------
+
+-- Returns estimated time until queen spawns (in seconds), or nil if already spawned
+function hr.getQueenETA()
+    local stage = gameInfo.stage
+	if not gameInfo.anger or not stage or stage ~= "main" then
+		return nil
 	end
 
-	local currentAnger = gameInfo.raptorQueenAnger or 0
-	local gainRate = harmonyRaptor.getAngerGainRate()
+	local currentAnger = gameInfo.anger
+	local gainRate = gameInfo.angerGainBase + gameInfo.angerGainAggression + gameInfo.angerGainEco
 
 	if gainRate <= 0 then
 		return 999999  -- Infinite time if no anger gain
@@ -230,23 +134,17 @@ function harmonyRaptor.getQueenETA()
 	return angerRemaining / gainRate
 end
 
--- Returns number of queens/bosses configured for this match
-function harmonyRaptor.getBossCount()
-	local modOptions = Spring.GetModOptions()
-	return modOptions.raptor_queen_count or 1
+-- Unit utilities
+-- ----------------------------------------
+
+-- Returns true if the given unit def name is a mini boss
+function hr.isMiniBoss(unitDefName)
+	return miniBossNames[unitDefName] ~= nil
 end
 
--- Returns current queen health percentage (0-100), or 0 if queen not spawned
-function harmonyRaptor.getQueenHealth()
-	if harmonyRaptor.getRaptorStage() ~= "boss" then
-		return 0
-	end
-	return gameInfo.raptorQueenHealth or 0
-end
-
--- Returns number of queens killed, or nil if not tracked
-function harmonyRaptor.getQueensKilled()
-	return gameInfo.raptorQueensKilled
+-- Returns true if the given unit def name is a Queenling
+function hr.isQueenling(unitDefName)
+	return unitDefName and (unitDefName:find("raptor_miniq_") ~= nil)
 end
 
 -- Returns boss/queen information including resistances, player damages, and health status
@@ -256,7 +154,7 @@ end
 --   playerDamages = {{name, damage, relative}, ...},
 --   healths = {{id, health, maxHealth, percentage}, ...}
 -- }
-function harmonyRaptor.getBossInfo()
+function hr.getBossInfo()
 	local result = {
 		resistances = {},
 		playerDamages = {},
@@ -322,12 +220,11 @@ function harmonyRaptor.getBossInfo()
 	return result
 end
 
--- ========================================
 -- Team & Player Utilities
 -- ========================================
 
 -- Returns the Raptors/Gaia team ID
-function harmonyRaptor.getRaptorsTeamID()
+function hr.getRaptorsTeamID()
 	-- Check all teams for Raptors LuaAI
 	local teamIDs = Spring.GetTeamList()
 	for i = 1, #teamIDs do
@@ -343,7 +240,7 @@ function harmonyRaptor.getRaptorsTeamID()
 end
 
 -- Returns true if the given unit belongs to the Raptors team
-function harmonyRaptor.isRaptorUnit(unitID)
+function hr.isRaptorUnit(unitID)
 	if not unitID then
 		return false
 	end
@@ -353,14 +250,14 @@ function harmonyRaptor.isRaptorUnit(unitID)
 		return false
 	end
 
-	return unitTeam == harmonyRaptor.getRaptorsTeamID()
+	return unitTeam == hr.getRaptorsTeamID()
 end
 
 -- Returns list of player team IDs (excluding Raptors/Scavengers/Gaia)
-function harmonyRaptor.getPlayerTeams()
+function hr.getPlayerTeams()
 	local teamIDs = Spring.GetTeamList()
 	local playerTeams = {}
-	local raptorsTeam = harmonyRaptor.getRaptorsTeamID()
+	local raptorsTeam = hr.getRaptorsTeamID()
 
 	for i = 1, #teamIDs do
 		local teamID = teamIDs[i]
@@ -377,29 +274,6 @@ function harmonyRaptor.getPlayerTeams()
 	return playerTeams
 end
 
--- ========================================
--- Anger Breakdown Functions
--- ========================================
-
--- Returns total anger gain rate per second
-function harmonyRaptor.getAngerGainRate()
-	local base = gameInfo.RaptorQueenAngerGain_Base or 0
-	local eco = gameInfo.RaptorQueenAngerGain_Eco or 0
-	local aggression = gameInfo.RaptorQueenAngerGain_Aggression or 0
-	return base + eco + aggression
-end
-
--- Returns table with anger gain components
-function harmonyRaptor.getAngerComponents()
-	return {
-		base = gameInfo.RaptorQueenAngerGain_Base or 0,
-		eco = gameInfo.RaptorQueenAngerGain_Eco or 0,
-		aggression = gameInfo.RaptorQueenAngerGain_Aggression or 0,
-		total = harmonyRaptor.getAngerGainRate()
-	}
-end
-
--- ========================================
 -- Eco Value Calculation (Raptor Targeting)
 -- ========================================
 
@@ -456,7 +330,7 @@ end
 local defIDsEcoValues = nil
 
 -- Initialize eco value cache (call once at startup)
-function harmonyRaptor.initEcoValueCache()
+function hr.initEcoValueCache()
 	if defIDsEcoValues then
 		return defIDsEcoValues
 	end
@@ -472,9 +346,9 @@ function harmonyRaptor.initEcoValueCache()
 end
 
 -- Returns eco value for a unit def ID (uses cache)
-function harmonyRaptor.getUnitEcoValue(unitDefID)
+function hr.getUnitEcoValue(unitDefID)
 	if not defIDsEcoValues then
-		harmonyRaptor.initEcoValueCache()
+		hr.initEcoValueCache()
 	end
 	return defIDsEcoValues[unitDefID] or 0
 end
@@ -484,12 +358,12 @@ end
 -- unitDefID: the unit def ID
 -- teamID: the team owning the unit
 -- isAdd: true to add, false to subtract
-function harmonyRaptor.updatePlayerEcoValues(playerEcoTable, unitDefID, teamID, isAdd)
+function hr.updatePlayerEcoValues(playerEcoTable, unitDefID, teamID, isAdd)
 	if not playerEcoTable[teamID] then
 		return
 	end
 
-	local ecoValue = harmonyRaptor.getUnitEcoValue(unitDefID)
+	local ecoValue = hr.getUnitEcoValue(unitDefID)
 	if ecoValue > 0 then
 		if isAdd then
 			playerEcoTable[teamID] = playerEcoTable[teamID] + ecoValue
@@ -499,4 +373,4 @@ function harmonyRaptor.updatePlayerEcoValues(playerEcoTable, unitDefID, teamID, 
 	end
 end
 
-return harmonyRaptor
+return hr
