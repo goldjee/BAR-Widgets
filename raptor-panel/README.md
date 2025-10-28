@@ -1,6 +1,6 @@
 # Raptor Stats Panel
 
-![Grace](https://github.com/goldjee/BAR-Widgets/blob/fb0741d2939abd6584d9c903b5bee496670d344f/raptor-panel/panel-grace.png) ![Hatching](https://github.com/goldjee/BAR-Widgets/blob/fb0741d2939abd6584d9c903b5bee496670d344f/raptor-panel/panel-hatching.png)
+![Grace](https://github.com/goldjee/BAR-Widgets/blob/e5aff38b7a0c4ff6326ad82a35eac84a75efccf2/raptor-panel/panel-grace.png) ![Hatching](https://github.com/goldjee/BAR-Widgets/blob/e5aff38b7a0c4ff6326ad82a35eac84a75efccf2/raptor-panel/panel-hatching.png)
 
 A comprehensive UI widget for Beyond All Reason that displays real-time statistics and information about the Raptor game mode in a clean interface.
 
