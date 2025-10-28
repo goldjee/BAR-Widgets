@@ -1,6 +1,6 @@
 # Raptor Stats Panel
 
-![Raptor Panel](https://github.com/goldjee/BAR-Widgets/blob/fb0741d2939abd6584d9c903b5bee496670d344f/raptor-panel/panel.png)
+![Grace](https://github.com/goldjee/BAR-Widgets/blob/fb0741d2939abd6584d9c903b5bee496670d344f/raptor-panel/panel-grace.png) ![Hatching](https://github.com/goldjee/BAR-Widgets/blob/fb0741d2939abd6584d9c903b5bee496670d344f/raptor-panel/panel-hatching.png)
 
 A comprehensive UI widget for Beyond All Reason that displays real-time statistics and information about the Raptor game mode in a clean interface.
 
@@ -10,7 +10,7 @@ The Raptor Stats Panel provides players with critical information about the Rapt
 
 ## Installation
 
-Put the **harmony** and **raptor-panel** folders into your `[...]\Beyond-All-Reason\data\LuaUI\Widgets\` folder and enable the "Raptor Stats Panel" widget from the in-game settings menu.
+Put the **harmony** and **raptor-panel** folders into your `[...]\Beyond-All-Reason\data\LuaUI\Widgets\` folder and enable the "Raptor Panel" widget from the in-game settings menu.
 
 ## Features
 
@@ -27,10 +27,6 @@ The status panel automatically adapts to display relevant information based on t
 - **Queen Anger Level** - Current hatch progress percentage (0-100%)
 - **Evolution Progress** - Tech anger level indicating threat escalation
 - **Queen ETA** - Estimated time until queen spawns
-- **Anger Rate Breakdown** - Real-time anger gain components:
-  - Base anger rate
-  - Economy-based anger gain
-  - Aggression-based anger gain
 
 #### Boss Phase
 

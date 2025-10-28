@@ -1,0 +1,327 @@
+/* ========================================
+   1. BASE STYLES (HTML Elements)
+   ======================================== */
+
+body {
+    font-family: "Exo 2";
+    font-size: 16dp;
+}
+
+div {
+    display: block;
+}
+
+p {
+    display: block;
+    font-size: 16dp;
+}
+
+h1 {
+    display: block;
+    font-size: 18dp;
+}
+
+h2 {
+    display: block;
+    font-size: 16dp;
+}
+
+/* Table elements */
+table {
+    width: 100%;
+    box-sizing: border-box;
+    display: table;
+    font-size: 14dp;
+}
+
+tr {
+    box-sizing: border-box;
+    display: table-row;
+}
+
+td {
+    box-sizing: border-box;
+    display: table-cell;
+}
+
+col {
+    box-sizing: border-box;
+    display: table-column;
+}
+
+colgroup {
+    display: table-column-group;
+}
+
+thead, tbody, tfoot {
+    display: table-row-group;
+}
+
+thead tr td {
+    text-align: left;
+    padding: 4dp 0dp;
+    color: #B3B3B3;
+    border-bottom: 1dp #ffffff40;
+}
+
+tbody tr td {
+    padding: 4dp 0dp;
+}
+
+
+/* ========================================
+   2. UTILITIES (Single-Purpose Classes)
+   ======================================== */
+
+/* Typography utilities */
+.font-bold {
+    font-weight: 700;
+}
+
+.text-sm {
+    font-size: 14dp;
+}
+
+.text-xl {
+    font-size: 18dp;
+}
+
+/* Color utilities */
+.text-dark {
+    color: #4a4a4a;
+}
+
+.text-dim {
+    color: #B3B3B3;
+}
+
+.bg-primary {
+    background-color: #FDC04C;
+}
+
+/* Semantic color utilities */
+.bad {
+    color: #FF4D4D;
+}
+
+.good {
+    color: #4DFF4D;
+}
+
+.warning {
+    color: #FFCC4D;
+}
+
+.neutral {
+    color: #CCCCFF;
+}
+
+
+/* ========================================
+   3. LAYOUT (Page Structure)
+   ======================================== */
+
+#raptor-panel-widget {
+    /* positional properties */
+    position: absolute;
+    top: 120dp;
+    right: 10dp;
+    /* dimensional properties */
+    width: 300dp;
+    /* height: 400dp; */
+    background: #060606ba;
+}
+
+#widget-container {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+}
+
+
+/* ========================================
+   4. COMPONENTS (Reusable UI Parts)
+   ======================================== */
+
+/* Debug Controls Component */
+.debug-controls {
+    position: absolute;
+    top: -15dp;
+    right: -5dp;
+    display: flex;
+    gap: 3dp;
+    z-index: 10;
+}
+
+.debug-btn {
+    height: 20dp;
+    padding: 0 4dp;
+    cursor: pointer;
+    text-align: center;
+    line-height: 18dp;
+    transition: all 0.1s;
+}
+
+.debug-btn:hover {
+    transform: scale(1.1);
+}
+
+.debug-btn:active {
+    transform: scale(0.95);
+}
+
+/* Header Component */
+#widget-header {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+
+    background-color: #4a4a4aba;
+    text-align: center;
+    text-transform: uppercase;
+    color: white;
+    padding: 4dp 8dp;
+}
+
+/* Status Panel Component */
+#status {
+    background-color: #282828ba;
+    padding: 8dp 8dp;
+}
+
+#status div {
+    display: flex;
+    flex-direction: column;
+    gap: 4dp;
+}
+
+/* Tabs Component */
+#tab-list {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+
+    background-color: #333;
+}
+
+.tab {
+    width: 33.33%;
+    cursor: pointer;
+    text-align: center;
+    text-transform: uppercase;
+    padding: 4dp 8dp;
+}
+
+.tab:hover {
+    color: #ebebeb;
+}
+
+/* Tab Content Container */
+.tab-content-section {
+    padding: 4dp 8dp;
+}
+
+/* Tab Panel Component */
+.tab-panel h2 {
+    margin-bottom: 8dp;
+    color: #FFCC4D;
+}
+
+/* Progress Bar Component */
+.progress-bar {
+    width: 100%;
+    background-color: #333333;
+    height: 6dp;
+    border-radius: 6dp;
+    position: relative;
+    overflow: hidden;
+}
+
+.progress-fill {
+    background-color: #CCCCCC;  /* Default gray, overridden by color variants */
+    height: 100%;
+    position: absolute;
+    left: 0;
+    top: 0;
+    transition: width 0.3s;
+}
+
+/* Progress bar color variants */
+.progress-fill.bad {
+    background-color: #FF4D4D;
+}
+
+.progress-fill.warning {
+    background-color: #FFCC4D;
+}
+
+.progress-fill.good {
+    background-color: #4DFF4D;
+}
+
+.progress-fill.neutral {
+    background-color: #CCCCFF;
+}
+
+.progress-cell {
+    padding-right: 4dp;
+}
+
+.progress-cell .progress-bar {
+    top: 5dp;
+}
+
+/* Boss Health Grid Component */
+.boss-health-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8dp;
+    margin-bottom: 12dp;
+}
+
+.boss-health-item {
+    font-size: 14dp;
+    font-weight: bold;
+}
+
+
+/* ========================================
+   5. STATE MODIFIERS (Dynamic States)
+   ======================================== */
+
+/* Active state for tabs */
+.is-active {
+    background-color: #4d4d804d;
+}
+
+/* Player highlight state */
+.is-highlighted {
+    background-color: #4D4D804D;
+}
+
+/* Threat level states */
+.is-threat-high td {
+    color: #FF4D4D;
+}
+
+.is-threat-medium td {
+    color: #FFCC4D;
+}
+
+.is-threat-low td {
+    color: #4DFF4D;
+}
+
+/* Threat level progress bar colors */
+.is-threat-high .progress-fill {
+    background-color: #FF4D4D;
+}
+
+.is-threat-medium .progress-fill {
+    background-color: #FFCC4D;
+}
+
+.is-threat-low .progress-fill {
+    background-color: #4DFF4D;
+}
