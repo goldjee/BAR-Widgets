@@ -10,7 +10,7 @@ The Raptor Stats Panel provides players with critical information about the Rapt
 
 ## Installation
 
-Put the **harmony** and **raptor-panel** folders into your `[...]\Beyond-All-Reason\data\LuaUI\Widgets\` folder and enable the "Raptor Panel" widget from the in-game settings menu.
+Put [../dist/raptor-panel.lua](../dist/raptor-panel.lua) into your `[...]\Beyond-All-Reason\data\LuaUI\Widgets\` folder and enable the "Raptor Panel" widget from the in-game settings menu.
 
 ## Features
 

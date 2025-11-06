@@ -1,29 +1,34 @@
 if not RmlUi then
-    return
+	return
 end
 
 local widget = widget ---@type Widget
 
 function widget:GetInfo()
 	return {
-		name = 'Raptor Panel',
-		desc = 'Shows raptor and player statistics in a compact interface',
-		author = 'Insider',
-		date = '16.10.2025',
+		name = "Raptor Panel",
+		desc = "Shows raptor and player statistics in a compact interface",
+		author = "Insider",
+		date = "16.10.2025",
 		layer = 0,
 		enabled = true,
 		version = 3,
 	}
 end
 
-local Harmony = VFS.Include('LuaUI/Widgets/harmony/harmony.lua')
-local HarmonyRaptor = VFS.Include('LuaUI/Widgets/harmony/harmony-raptor.lua')
+local RCSS_CHUNK = require("raptor-panel-rcss")
+local RML_CHUNK = require("raptor-panel-rml")
+
+local Harmony = require("harmony")
+local HarmonyRaptor = require("harmony-raptor")
+
 local modOptions = Spring.GetModOptions()
 
 -- Constants
 local WIDGET_NAME = "raptor-panel"
 local MODEL_NAME = "raptor-panel_model"
-local RML_PATH = "Luaui/Widgets/raptor-panel/raptor-panel.rml"
+local RML_PATH = "LuaUI/Widgets/raptor-panel.rml"
+local RCSS_PATH = "LuaUI/Widgets/raptor-panel.rcss"
 
 -- Widget state
 local document
@@ -42,14 +47,14 @@ local CONFIG = {
 
 -- Boss colors for health bars (used for queen health visualization)
 local bossColors = {
-	{0.709, 0.537, 0.000}, -- yellow
-	{0.796, 0.294, 0.086}, -- orange
-	{0.862, 0.196, 0.184}, -- red
-	{0.827, 0.211, 0.509}, -- magenta
-	{0.423, 0.443, 0.768}, -- violet
-	{0.149, 0.545, 0.823}, -- blue
-	{0.164, 0.631, 0.596}, -- cyan
-	{0.521, 0.600, 0.000}, -- green
+	{ 0.709, 0.537, 0.000 }, -- yellow
+	{ 0.796, 0.294, 0.086 }, -- orange
+	{ 0.862, 0.196, 0.184 }, -- red
+	{ 0.827, 0.211, 0.509 }, -- magenta
+	{ 0.423, 0.443, 0.768 }, -- violet
+	{ 0.149, 0.545, 0.823 }, -- blue
+	{ 0.164, 0.631, 0.596 }, -- cyan
+	{ 0.521, 0.600, 0.000 }, -- green
 }
 
 -- Helper to convert RGB to hex color string for RmlUI
@@ -96,12 +101,54 @@ local init_model = {
 	},
 }
 
+-- Utility Functions
 local function log(msg)
-    -- Spring.SendCommands("say a: " .. msg)
+	-- Spring.SendCommands("say a: " .. msg)
 	Spring.Echo(WIDGET_NAME .. ": " .. msg)
 end
 
--- Utility Functions
+-- Helper to check if file contents and chunk are the same.
+--
+---@param chunk string
+---@param path string
+---@return boolean tmp false if not else true
+local function checkFile(chunk, path)
+	local file = io.open(path, "r")
+	if not file then
+		return false
+	end
+
+	local fileChunk = file:read("*a")
+	file:close()
+
+	if chunk ~= fileChunk then
+		return false
+	end
+
+	return true
+end
+
+-- Helper to overwrite file contents with the given chunk.
+--
+---@param chunk string
+---@param path string
+local function overwriteFile(chunk, path)
+	local file = io.open(path, "w")
+
+	if not file then
+		log(string.format("unable to save file %s", path))
+		return
+	end
+
+	if not file:write(chunk) then
+		log(string.format("failed to write to file %s", path))
+		file:close()
+		return
+	end
+
+	file:close()
+end
+
 local function formatNumber(num)
 	-- Nil-safe: return "0" if num is nil or not a number
 	if not num or type(num) ~= "number" then
@@ -136,9 +183,11 @@ local function formatTime(seconds)
 end
 
 local function updateGameInfo()
-	if not dm_handle then return end
+	if not dm_handle then
+		return
+	end
 
-	HarmonyRaptor.updateGameInfo()  -- Fetch fresh data from engine
+	HarmonyRaptor.updateGameInfo() -- Fetch fresh data from engine
 	local info = HarmonyRaptor.getGameInfo()
 	if not info then
 		-- Keep existing values, don't crash
@@ -169,7 +218,7 @@ local function updateGameInfo()
 		local teamID = teamIDs[i]
 		local playerName = Harmony.getPlayerName(teamID)
 
-		if playerName and playerName ~= '' and not (playerName:find('Raptors') or playerName:find('Scavengers')) then
+		if playerName and playerName ~= "" and not (playerName:find("Raptors") or playerName:find("Scavengers")) then
 			local ecoValue = playerEcoAttractionsRaw[teamID] or 0
 			ecoValue = math.max(0, ecoValue)
 			sum = sum + ecoValue
@@ -178,7 +227,7 @@ local function updateGameInfo()
 				name = playerName,
 				value = ecoValue,
 				teamID = teamID,
-				isMe = (myTeamId == teamID)
+				isMe = (myTeamId == teamID),
 			})
 		end
 	end
@@ -214,7 +263,9 @@ local function updateGameInfo()
 	end
 
 	-- Sort by value descending
-	table.sort(playerEcoData, function(a, b) return a.value > b.value end)
+	table.sort(playerEcoData, function(a, b)
+		return a.value > b.value
+	end)
 
 	-- Update data model
 	dm_handle.ecoData = playerEcoData
@@ -245,7 +296,7 @@ local function updateGameInfo()
 				name = dmg.name,
 				damage = dmg.damage,
 				damageFormatted = formatNumber(dmg.damage),
-				relative = string.format("%.1f", dmg.relative or relativeValue)
+				relative = string.format("%.1f", dmg.relative or relativeValue),
 			})
 		end
 
@@ -257,7 +308,7 @@ local function updateGameInfo()
 				health = health.health,
 				maxHealth = health.maxHealth,
 				percentage = string.format("%.0f", health.percentage),
-				colorHex = rgbToHex(color[1], color[2], color[3])
+				colorHex = rgbToHex(color[1], color[2], color[3]),
 			})
 		end
 
@@ -267,7 +318,7 @@ local function updateGameInfo()
 				name = res.name,
 				percent = res.percent,
 				damage = res.damage,
-				damageFormatted = formatNumber(res.damage)
+				damageFormatted = formatNumber(res.damage),
 			})
 		end
 	end
@@ -285,23 +336,23 @@ local function updateGameInfo()
 end
 
 function widget:Initialize()
-    -- log(WIDGET_NAME .. ": Initializing widget...")
+	-- log(WIDGET_NAME .. ": Initializing widget...")
 
-    -- Get the shared RML context
-    widget.rmlContext = RmlUi.GetContext("shared")
-    if not widget.rmlContext then
-        log("ERROR - Failed to get RML context")
-        return false
-    end
+	-- Get the shared RML context
+	widget.rmlContext = RmlUi.GetContext("shared")
+	if not widget.rmlContext then
+		log("ERROR - Failed to get RML context")
+		return false
+	end
 
-    -- Create and bind the data model
-    dm_handle = widget.rmlContext:OpenDataModel(MODEL_NAME, init_model)
-    if not dm_handle then
-        log("ERROR - Failed to create data model")
-        return false
-    end
+	-- Create and bind the data model
+	dm_handle = widget.rmlContext:OpenDataModel(MODEL_NAME, init_model)
+	if not dm_handle then
+		log("ERROR - Failed to create data model")
+		return false
+	end
 
-    -- log("Data model created successfully")
+	-- log("Data model created successfully")
 
 	-- Initialize team data
 	raptorsTeamID = HarmonyRaptor.getRaptorsTeamID()
@@ -330,40 +381,51 @@ function widget:Initialize()
 	-- Populate data
 	updateGameInfo()
 
-    -- Load the RML document
-    document = widget.rmlContext:LoadDocument(RML_PATH, widget)
-    if not document then
-        log("ERROR - Failed to load document: " .. RML_PATH)
-        widget:Shutdown()
-        return false
-    end
+	-- Write .rml and .rcss if needed
+	if not checkFile(RML_CHUNK, RML_PATH) then
+		log(string.format("Writing .rml: %s", RML_PATH))
+		overwriteFile(RML_CHUNK, RML_PATH)
+	end
 
-    -- Apply styles and show the document
-    document:ReloadStyleSheet()
-    document:Show()
+	if not checkFile(RCSS_CHUNK, RCSS_PATH) then
+		log(string.format("Writing .rcss: %s", RCSS_PATH))
+		overwriteFile(RCSS_CHUNK, RCSS_PATH)
+	end
 
-    -- log(WIDGET_NAME .. ": Widget initialized successfully")
+	-- Load the RML document
+	document = widget.rmlContext:LoadDocument(RML_PATH, widget)
+	if not document then
+		log("ERROR - Failed to load document: " .. RML_PATH)
+		widget:Shutdown()
+		return false
+	end
 
-    return true
+	-- Apply styles and show the document
+	document:ReloadStyleSheet()
+	document:Show()
+
+	-- log(WIDGET_NAME .. ": Widget initialized successfully")
+
+	return true
 end
 
 function widget:Shutdown()
-    -- log(WIDGET_NAME .. ": Shutting down widget...")
-    
-    -- Clean up data model
-    if widget.rmlContext and dm_handle then
-        widget.rmlContext:RemoveDataModel(MODEL_NAME)
-        dm_handle = nil
-    end
-    
-    -- Close document
-    if document then
-        document:Close()
-        document = nil
-    end
-    
-    widget.rmlContext = nil
-    -- log(WIDGET_NAME .. ": Shutdown complete")
+	-- log(WIDGET_NAME .. ": Shutting down widget...")
+
+	-- Clean up data model
+	if widget.rmlContext and dm_handle then
+		widget.rmlContext:RemoveDataModel(MODEL_NAME)
+		dm_handle = nil
+	end
+
+	-- Close document
+	if document then
+		document:Close()
+		document = nil
+	end
+
+	widget.rmlContext = nil
+	-- log(WIDGET_NAME .. ": Shutdown complete")
 end
 
 function widget:GameFrame(n)
@@ -374,33 +436,33 @@ end
 
 -- Widget functions callable from RML
 function widget:Reload()
-    -- log(WIDGET_NAME .. ": Reloading widget...")
-    widget:Shutdown()
-    widget:Initialize()
+	-- log(WIDGET_NAME .. ": Reloading widget...")
+	widget:Shutdown()
+	widget:Initialize()
 end
 
 function widget:ToggleDebugger()
-    if dm_handle then
-        dm_handle.debugMode = not dm_handle.debugMode
-        
-        if dm_handle.debugMode then
-            RmlUi.SetDebugContext('shared')
-            -- log(WIDGET_NAME .. ": RmlUi debugger enabled")
-        else
-            RmlUi.SetDebugContext(nil)
-            -- log(WIDGET_NAME .. ": RmlUi debugger disabled")
-        end
-    end
+	if dm_handle then
+		dm_handle.debugMode = not dm_handle.debugMode
+
+		if dm_handle.debugMode then
+			RmlUi.SetDebugContext("shared")
+			-- log(WIDGET_NAME .. ": RmlUi debugger enabled")
+		else
+			RmlUi.SetDebugContext(nil)
+			-- log(WIDGET_NAME .. ": RmlUi debugger disabled")
+		end
+	end
 end
 
 function widget:SetTab(tabName)
-    if not (tabName == "economy" or tabName == "damage" or tabName == "queens") then
-        return
-    end
+	if not (tabName == "economy" or tabName == "damage" or tabName == "queens") then
+		return
+	end
 
-    if dm_handle then
-        dm_handle.activeTab = tabName
-    end
+	if dm_handle then
+		dm_handle.activeTab = tabName
+	end
 end
 
 function widget:UnitCreated(unitID, unitDefID, unitTeamID)

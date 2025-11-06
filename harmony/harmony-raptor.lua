@@ -6,12 +6,12 @@ local hr = {}
 -- Definitions
 -- ========================================
 
-local harmony = VFS.Include('LuaUI/Widgets/harmony/harmony.lua')
+local harmony = require("harmony")
 
 -- Table containing all the information about the game
 local gameInfo = {}
 local nilDefaultRules = {
-	['raptorQueensKilled'] = true,
+	["raptorQueensKilled"] = true,
 }
 
 -- Mini boss data tables
@@ -48,7 +48,7 @@ end
 
 -- Updates the gameInfo table with the latest game rules parameters
 function hr.updateGameInfo()
-    -- Main settings
+	-- Main settings
 	gameInfo.difficulty = getGameRule("raptorDifficulty")
 	gameInfo.gracePeriod = getGameRule("raptorGracePeriod")
 	gameInfo.anger = getGameRule("raptorQueenAnger")
@@ -60,36 +60,36 @@ function hr.updateGameInfo()
 	gameInfo.queenCountKilled = getGameRule("raptorQueensKilled")
 	gameInfo.queenTime = getGameRule("raptorQueenTime")
 
-    local modOptions = Spring.GetModOptions()
+	local modOptions = Spring.GetModOptions()
 
-    -- Queen count
+	-- Queen count
 	gameInfo.queenCount = modOptions.raptor_queen_count or 1
 
-    -- Current raptor stage: "grace", "main", or "boss"
-    local stage = nil
-    if gameInfo.gracePeriod and gameInfo.anger then
-        stage = "grace"
-        if harmony.getTime() > gameInfo.gracePeriod then
-            if (gameInfo.anger < 100) then
-                stage = "main"
-            else
-                stage = "boss"
-            end
-        end
-    end
-    gameInfo.stage = stage
+	-- Current raptor stage: "grace", "main", or "boss"
+	local stage = nil
+	if gameInfo.gracePeriod and gameInfo.anger then
+		stage = "grace"
+		if harmony.getTime() > gameInfo.gracePeriod then
+			if gameInfo.anger < 100 then
+				stage = "main"
+			else
+				stage = "boss"
+			end
+		end
+	end
+	gameInfo.stage = stage
 
-    -- Time remaining in grace period (in seconds), or 0 if grace period has ended
-    local gracePeriodRemaining = nil
-    if gameInfo.gracePeriod then
-        gracePeriodRemaining = gameInfo.gracePeriod - harmony.getTime()
-	    gameInfo.gracePeriodRemaining = math.max(0, gracePeriodRemaining)
-    end
+	-- Time remaining in grace period (in seconds), or 0 if grace period has ended
+	local gracePeriodRemaining = nil
+	if gameInfo.gracePeriod then
+		gracePeriodRemaining = gameInfo.gracePeriod - harmony.getTime()
+		gameInfo.gracePeriodRemaining = math.max(0, gracePeriodRemaining)
+	end
 
-    -- Queen hatch progress as a percentage (0-100)
-    if gameInfo.anger then
-        gameInfo.queenHatchProgress = math.min(100, math.floor(0.5 + gameInfo.anger))
-    end
+	-- Queen hatch progress as a percentage (0-100)
+	if gameInfo.anger then
+		gameInfo.queenHatchProgress = math.min(100, math.floor(0.5 + gameInfo.anger))
+	end
 
 	-- Nuke threat level: "none", "warning", or "critical"
 	local nukeThreatLevel = nil
@@ -107,7 +107,7 @@ end
 
 -- Returns gameInfo table
 function hr.getGameInfo()
-    return gameInfo
+	return gameInfo
 end
 
 -- Utility functions
@@ -118,7 +118,7 @@ end
 
 -- Returns estimated time until queen spawns (in seconds), or nil if already spawned
 function hr.getQueenETA()
-    local stage = gameInfo.stage
+	local stage = gameInfo.stage
 	if not gameInfo.anger or not stage or stage ~= "main" then
 		return nil
 	end
@@ -127,7 +127,7 @@ function hr.getQueenETA()
 	local gainRate = gameInfo.angerGainBase + gameInfo.angerGainAggression + gameInfo.angerGainEco
 
 	if gainRate <= 0 then
-		return 999999  -- Infinite time if no anger gain
+		return 999999 -- Infinite time if no anger gain
 	end
 
 	local angerRemaining = 100 - currentAnger
@@ -158,10 +158,10 @@ function hr.getBossInfo()
 	local result = {
 		resistances = {},
 		playerDamages = {},
-		healths = {}
+		healths = {},
 	}
 
-	local bossInfoRaw = Spring.GetGameRulesParam('pveBossInfo')
+	local bossInfoRaw = Spring.GetGameRulesParam("pveBossInfo")
 	if not bossInfoRaw then
 		return result
 	end
@@ -182,11 +182,13 @@ function hr.getBossInfo()
 			table.insert(result.resistances, {
 				name = name,
 				percent = resistance.percent,
-				damage = resistance.damage
+				damage = resistance.damage,
 			})
 		end
 	end
-	table.sort(result.resistances, function(a, b) return a.damage > b.damage end)
+	table.sort(result.resistances, function(a, b)
+		return a.damage > b.damage
+	end)
 
 	-- Process player damages
 	local totalDamage = 0
@@ -199,10 +201,12 @@ function hr.getBossInfo()
 		table.insert(result.playerDamages, {
 			name = name,
 			damage = damage,
-			relative = damage / math.max(totalDamage, 1)
+			relative = damage / math.max(totalDamage, 1),
 		})
 	end
-	table.sort(result.playerDamages, function(a, b) return a.damage > b.damage end)
+	table.sort(result.playerDamages, function(a, b)
+		return a.damage > b.damage
+	end)
 
 	-- Process boss healths
 	for queenID, status in pairs(bossInfoRaw.statuses or {}) do
@@ -211,11 +215,13 @@ function hr.getBossInfo()
 				id = tonumber(queenID),
 				health = status.health,
 				maxHealth = status.maxHealth,
-				percentage = (status.health / status.maxHealth) * 100
+				percentage = (status.health / status.maxHealth) * 100,
 			})
 		end
 	end
-	table.sort(result.healths, function(a, b) return a.percentage < b.percentage end)
+	table.sort(result.healths, function(a, b)
+		return a.percentage < b.percentage
+	end)
 
 	return result
 end
@@ -230,7 +236,7 @@ function hr.getRaptorsTeamID()
 	for i = 1, #teamIDs do
 		local teamID = teamIDs[i]
 		local teamLuaAI = Spring.GetTeamLuaAI(teamID)
-		if teamLuaAI and teamLuaAI:find('Raptors') then
+		if teamLuaAI and teamLuaAI:find("Raptors") then
 			return teamID
 		end
 	end
@@ -265,7 +271,7 @@ function hr.getPlayerTeams()
 
 		-- Exclude Raptors, Scavengers, and teams with no players
 		if teamID ~= raptorsTeam then
-			if not teamLuaAI or (not teamLuaAI:find('Raptors') and not teamLuaAI:find('Scavengers')) then
+			if not teamLuaAI or (not teamLuaAI:find("Raptors") and not teamLuaAI:find("Scavengers")) then
 				playerTeams[#playerTeams + 1] = teamID
 			end
 		end
@@ -280,14 +286,16 @@ end
 -- Check if unit is an object (not counted for eco value)
 local isObject = {}
 for udefID, def in ipairs(UnitDefs) do
-	if def.modCategories['object'] or def.customParams.objectify then
+	if def.modCategories["object"] or def.customParams.objectify then
 		isObject[udefID] = true
 	end
 end
 
 -- Calculate eco attraction value for a unit definition
 local function calculateEcoValueForDef(unitDef)
-	if (unitDef.canMove and not (unitDef.customParams and unitDef.customParams.iscommander)) or isObject[unitDef.name] then
+	if
+		(unitDef.canMove and not (unitDef.customParams and unitDef.customParams.iscommander)) or isObject[unitDef.name]
+	then
 		return 0
 	end
 
@@ -312,13 +320,13 @@ local function calculateEcoValueForDef(unitDef)
 		if unitDef.customParams.energyconv_capacity then
 			ecoValue = ecoValue + tonumber(unitDef.customParams.energyconv_capacity) / 2
 		end
-		if unitDef.customParams.decoyfor == 'armfus' then
+		if unitDef.customParams.decoyfor == "armfus" then
 			ecoValue = ecoValue + 1000
 		end
 		if unitDef.customParams.techlevel and tonumber(unitDef.customParams.techlevel) > 1 then
 			ecoValue = ecoValue * tonumber(unitDef.customParams.techlevel) * 2
 		end
-		if unitDef.customParams.unitgroup == 'antinuke' or unitDef.customParams.unitgroup == 'nuke' then
+		if unitDef.customParams.unitgroup == "antinuke" or unitDef.customParams.unitgroup == "nuke" then
 			ecoValue = 1000
 		end
 	end
