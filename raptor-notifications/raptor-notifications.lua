@@ -1,24 +1,26 @@
 function widget:GetInfo()
-	return {
-		name = 'Raptor Timing Notifications',
-		desc = 'Shows timing reminders for NuttyB Raptor spawns and aggro',
-		author = 'Insider',
-		date = '27.09.2025',
-		layer = 0,
-		enabled = true,
-		version = 2,
-	}
+    return {
+        name = "Raptor Timing Notifications",
+        desc = "Shows timing reminders for NuttyB Raptor spawns and aggro",
+        author = "Insider",
+        date = "27.09.2025",
+        layer = 0,
+        enabled = true,
+        version = 2,
+    }
 end
 
-local HarmonyRaptor = VFS.Include('LuaUI/Widgets/harmony/harmony-raptor.lua')
+local HarmonyRaptor = VFS.Include("LuaUI/Widgets/harmony/harmony-raptor.lua")
 
 local isDebug = false
-local notificationSound = 'LuaUI/Widgets/raptor-notifications/alert.mp3'
+local notificationSound = "LuaUI/Widgets/raptor-notifications/alert.mp3"
 
 -- Notification messages
 local gameStartNotification = "Focus on building your base and economy during the grace period."
-local firstWaveNotification = "First wave of Raptors will spawn soon. You should start working on defences."
-local queenHatchNotification60 = "Queen hatch at 60%. Consider strenghtening your defences and building LRPCs."
+local firstWaveNotification =
+    "First wave of Raptors will spawn soon. You should start working on defences."
+local queenHatchNotification60 =
+    "Queen hatch at 60%. Consider strenghtening your defences and building LRPCs."
 local queenHatchNotification80 = "Queen hatch at 80%. Consider walling off your base."
 local queenHatchNotification100 = "Queen hatched. Brace for impact!"
 
@@ -30,27 +32,26 @@ local queenHatchNotified80 = false
 local queenHatchNotified100 = false
 
 local function isRaptors()
-	return Spring.Utilities.Gametype.IsRaptors()
+    return Spring.Utilities.Gametype.IsRaptors()
 end
 
 local function isSpectating()
-	return Spring.GetSpectatingState() or Spring.IsReplay()
+    return Spring.GetSpectatingState() or Spring.IsReplay()
 end
 
 local function notify(msg)
-	Spring.PlaySoundFile(notificationSound, 1.0, 'ui')
+    Spring.PlaySoundFile(notificationSound, 1.0, "ui")
     if isDebug then
         Spring.Echo("Raptor Notification: " .. msg)
     end
     Spring.SendCommands("say a: " .. msg)
-    
 end
 
 function widget:Initialize()
-	if not isRaptors() or (not isDebug and isSpectating()) then
-		widgetHandler:RemoveWidget()
+    if not isRaptors() or (not isDebug and isSpectating()) then
+        widgetHandler:RemoveWidget()
         return
-	end
+    end
 
     HarmonyRaptor.updateGameInfo()
 end
@@ -80,9 +81,9 @@ function widget:GameFrame(n)
                 notify(queenHatchNotification80)
                 queenHatchNotified80 = true
             end
-		elseif stage == "boss" and not queenHatchNotified100 then
-			notify(queenHatchNotification100)
-			queenHatchNotified100 = true
+        elseif stage == "boss" and not queenHatchNotified100 then
+            notify(queenHatchNotification100)
+            queenHatchNotified100 = true
         end
-	end
+    end
 end
