@@ -1,4 +1,3 @@
-return [[
 /* ========================================
    1. BASE STYLES (HTML Elements)
    ======================================== */
@@ -326,4 +325,3 @@ tbody tr td {
 .is-threat-low .progress-fill {
     background-color: #4DFF4D;
 }
-]]

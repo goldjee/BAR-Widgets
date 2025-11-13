@@ -16,9 +16,6 @@ function widget:GetInfo()
     }
 end
 
-local RCSS_CHUNK = require("raptor-panel-rcss")
-local RML_CHUNK = require("raptor-panel-rml")
-
 local Harmony = require("harmony")
 local HarmonyRaptor = require("harmony-raptor")
 
@@ -27,8 +24,8 @@ local modOptions = Spring.GetModOptions()
 -- Constants
 local WIDGET_NAME = "raptor-panel"
 local MODEL_NAME = "raptor-panel_model"
-local RML_PATH = "LuaUI/Widgets/raptor-panel.rml"
-local RCSS_PATH = "LuaUI/Widgets/raptor-panel.rcss"
+local RML_PATH = "LuaUI/Widgets/raptor-panel/raptor-panel.rml"
+local RCSS_PATH = "LuaUI/Widgets/raptor-panel/raptor-panel.rcss"
 
 -- Widget state
 local document
@@ -110,48 +107,6 @@ local init_model = {
 local function log(msg)
     -- Spring.SendCommands("say a: " .. msg)
     Spring.Echo(WIDGET_NAME .. ": " .. msg)
-end
-
--- Helper to check if file contents and chunk are the same.
---
----@param chunk string
----@param path string
----@return boolean tmp false if not else true
-local function checkFile(chunk, path)
-    local file = io.open(path, "r")
-    if not file then
-        return false
-    end
-
-    local fileChunk = file:read("*a")
-    file:close()
-
-    if chunk ~= fileChunk then
-        return false
-    end
-
-    return true
-end
-
--- Helper to overwrite file contents with the given chunk.
---
----@param chunk string
----@param path string
-local function overwriteFile(chunk, path)
-    local file = io.open(path, "w")
-
-    if not file then
-        log(string.format("unable to save file %s", path))
-        return
-    end
-
-    if not file:write(chunk) then
-        log(string.format("failed to write to file %s", path))
-        file:close()
-        return
-    end
-
-    file:close()
 end
 
 local function formatNumber(num)
@@ -394,17 +349,6 @@ function widget:Initialize()
 
     -- Populate data
     updateGameInfo()
-
-    -- Write .rml and .rcss if needed
-    if not checkFile(RML_CHUNK, RML_PATH) then
-        log(string.format("Writing .rml: %s", RML_PATH))
-        overwriteFile(RML_CHUNK, RML_PATH)
-    end
-
-    if not checkFile(RCSS_CHUNK, RCSS_PATH) then
-        log(string.format("Writing .rcss: %s", RCSS_PATH))
-        overwriteFile(RCSS_CHUNK, RCSS_PATH)
-    end
 
     -- Load the RML document
     document = widget.rmlContext:LoadDocument(RML_PATH, widget)

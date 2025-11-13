@@ -10,7 +10,7 @@ function widget:GetInfo()
     }
 end
 
-local HarmonyRaptor = VFS.Include("LuaUI/Widgets/harmony/harmony-raptor.lua")
+local HarmonyRaptor = require("harmony-raptor")
 
 local isDebug = false
 local notificationSound = "LuaUI/Widgets/raptor-notifications/alert.mp3"
