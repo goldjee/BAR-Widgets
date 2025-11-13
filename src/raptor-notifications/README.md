@@ -4,4 +4,4 @@ A widget that provides notifications for raptor-related events. It alerts player
 
 ## Installation
 
-Put the **harmony** and **raptor-notifications** folders into your `[...]\Beyond-All-Reason\data\LuaUI\Widgets\` folder and enable the "Raptor Notifications" widget from the in-game settings menu.
+Take all files from `../dist/raptor-notifications/` into your `[...]\Beyond-All-Reason\data\LuaUI\Widgets\raptor-notifications` folder and enable the "Raptor Notifications" widget from the in-game settings menu.

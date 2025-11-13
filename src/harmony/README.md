@@ -13,7 +13,13 @@ The base harmony library providing fundamental game utilities.
 
 #### Usage
 ```lua
-local harmony = VFS.Include('LuaUI/Widgets/harmony/harmony.lua')
+-- Without luapack
+local Harmony = VFS.Include('LuaUI/Widgets/harmony/harmony.lua')
+local HarmonyRaptor = VFS.Include('LuaUI/Widgets/harmony/harmony-raptor.lua')
+
+-- With luapack
+local Harmony = require("harmony")
+local HarmonyRaptor = require("harmony-raptor")
 ```
 
 #### Functions
