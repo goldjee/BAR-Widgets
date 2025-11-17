@@ -20,7 +20,7 @@ local gameStartNotification = "Focus on building your base and economy during th
 local firstWaveNotification =
     "First wave of Raptors will spawn soon. You should start working on defences."
 local queenHatchNotification60 =
-    "Queen hatch at 60%. Consider strenghtening your defences and building LRPCs."
+    "Queen hatch at 60%. Consider strengthening your defences and building LRPCs."
 local queenHatchNotification80 = "Queen hatch at 80%. Consider walling off your base."
 local queenHatchNotification100 = "Queen hatched. Brace for impact!"
 
