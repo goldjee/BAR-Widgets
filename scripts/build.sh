@@ -8,24 +8,24 @@ BASE_PATH="$SCRIPT_DIR/../tools"
 FILE_NAME="luapack-linux-x86_64.zip"
 DOWNLOAD_URL="https://github.com/00fast00/luapack/releases/download/v0.1.1/luapack-linux-x86_64.zip"
 
-echo "[1/4] Downloading luapack..."
-mkdir -p "$BASE_PATH"
+# echo "[1/4] Downloading luapack..."
+# mkdir -p "$BASE_PATH"
 
-if command -v curl &> /dev/null; then
-    curl -L -o "$BASE_PATH/$FILE_NAME" "$DOWNLOAD_URL"
-elif command -v wget &> /dev/null; then
-    wget -O "$BASE_PATH/$FILE_NAME" "$DOWNLOAD_URL"
-else
-    echo "ERROR: Neither curl nor wget found. Please install one of them."
-    exit 1
-fi
+# if command -v curl &> /dev/null; then
+#     curl -L -o "$BASE_PATH/$FILE_NAME" "$DOWNLOAD_URL"
+# elif command -v wget &> /dev/null; then
+#     wget -O "$BASE_PATH/$FILE_NAME" "$DOWNLOAD_URL"
+# else
+#     echo "ERROR: Neither curl nor wget found. Please install one of them."
+#     exit 1
+# fi
 
-unzip -o "$BASE_PATH/$FILE_NAME" -d "$BASE_PATH"
+# unzip -o "$BASE_PATH/$FILE_NAME" -d "$BASE_PATH"
 
-if [ $? -ne 0 ]; then
-    echo "ERROR: Luapack download or extraction failed"
-    exit 1
-fi
+# if [ $? -ne 0 ]; then
+#     echo "ERROR: Luapack download or extraction failed"
+#     exit 1
+# fi
 
 # Make luapack executable
 chmod +x "$BASE_PATH/luapack"

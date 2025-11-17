@@ -9,4 +9,4 @@ If you have downloaded the widget while the game was already running, type `/lua
 ## How to build
 Run `scripts/build.bat` if you're on Windows or `scripts/build.sh` for Linux/MacOS.
 
-Special thanks to @00fast00 for creating luapack.
+Special thanks to @Fast for creating luapack.

@@ -1,19 +1,19 @@
 @echo off
-REM This script automates building distributable artifacts with luapack
+@REM This script automates building distributable artifacts with luapack
 
 setlocal enabledelayedexpansion
 
-echo [1/4] Downloading luapack...
-set base_path=%~dp0..\tools
-set file_name=luapack-windows-x86_64.zip
-set download_url=https://github.com/00fast00/luapack/releases/download/v0.1.1/luapack-windows-x86_64.zip
-powershell -Command "Invoke-WebRequest -Uri '%download_url%' -OutFile '%base_path%\%file_name%'"
-tar -xf "%base_path%\%file_name%" -C "%base_path%"
+@REM echo [1/4] Downloading luapack...
+@REM set base_path=%~dp0..\tools
+@REM set file_name=luapack-windows-x86_64.zip
+@REM set download_url=https://github.com/00fast00/luapack/releases/download/v0.1.1/luapack-windows-x86_64.zip
+@REM powershell -Command "Invoke-WebRequest -Uri '%download_url%' -OutFile '%base_path%\%file_name%'"
+@REM tar -xf "%base_path%\%file_name%" -C "%base_path%"
 
-if %ERRORLEVEL% neq 0 (
-    echo ERROR: Luapack download failed
-    exit /b 1
-)
+@REM if %ERRORLEVEL% neq 0 (
+@REM     echo ERROR: Luapack download failed
+@REM     exit /b 1
+@REM )
 
 echo [2/4] Cleaning up old build artifacts...
 if exist "%~dp0..\dist" rd /s /q "%~dp0..\dist"
