@@ -1,0 +1,198 @@
+<rml>
+<head>
+    <title>raptor-panel Widget</title>
+
+    <!-- Stylesheet -->
+    <link rel="stylesheet" href="raptor-panel.rcss" type="text/rcss" />
+</head>
+<body id="raptor-panel-widget">
+    <div id="widget-container" data-model="raptor-panel_model">
+        <!-- Small floating debug buttons -->
+        <div class="debug-controls" data-if="isDev == true">
+            <button class="debug-btn text-dark text-sm font-bold bg-primary" onclick="widget:Reload()" title="Reload Widget">reload</button>
+            <button class="debug-btn text-dark text-sm font-bold bg-primary" onclick="widget:ToggleDebugger()" title="Toggle Debugger">debug</button>
+        </div>
+
+        <div id="widget-header">
+            <p>Raptor Panel</p>
+            <p class="neutral">{{difficulty}}</p>
+        </div>
+
+        <div id="status">
+            <!-- Grace Period Stage -->
+            <div data-if="stage == 'grace'">
+                <h1>Stage: <span class="good">Grace</span></h1>
+                <p>Remaining time: {{gracePeriodRemaining}}</p>
+            </div>
+
+            <!-- Main Phase - Queen Anger -->
+            <div data-if="stage == 'main'" class="main-phase">
+                <h1>Stage: <span class="warning">Hatching</span></h1>
+                <p>{{queenCount}} queens, Hatch: {{queenHatchProgress}}%, ETA: {{queenETA}}</p>
+                <p class="text-sm text-dim">Rate: +{{angerGainTotal}}/s</p>
+                <!-- <p class="text-sm text-dim">Base: {{angerGainBase}}  Eco: {{angerGainEco}}  Aggro: {{angerGainAggression}}</p> -->
+                <p>Evolution: {{angerTech}}%</p>
+            </div>
+
+            <!-- Boss Phase - Queen Active -->
+            <div data-if="stage == 'boss'" class="boss-phase">
+                <h1>Stage: <span class="bad">Bosses</span></h1>
+                <p>Total health: {{queenHealth}}%<span data-if="queenCountKilled > 0 && queenCount > 1">, Killed: {{queenCountKilled}}/{{queenCount}}</span></p>
+                <!-- Progress bar for queen health -->
+                <div class="progress-bar">
+                    <div class="progress-fill bad" data-style-width="queenHealth + '%'"></div>
+                </div>
+                <p>Evolution: {{angerTech}}%</p>
+            </div>
+        </div>
+
+        <div id="tab-list">
+            <button class="tab"
+                    data-class-is-active="activeTab == 'economy'"
+                    onclick="widget:SetTab('economy')">Economy</button>
+            <button class="tab"
+                    data-class-is-active="activeTab == 'damage'"
+                    onclick="widget:SetTab('damage')">Damage</button>
+            <button class="tab"
+                    data-class-is-active="activeTab == 'queens'"
+                    onclick="widget:SetTab('queens')">Queens</button>
+        </div>
+
+        <div id="tab-content">
+            <!-- Economy Tab -->
+            <div id="tab-content-economy" data-if="activeTab == 'economy'" class="tab-panel">
+                <div class="tab-content-section">
+                    <h2>Player Eco Attractions</h2>
+
+                    <!-- Empty state -->
+                    <p data-if="playerEcoDataLength == 0" class="text-dim">No economy data yet</p>
+
+                    <!-- Data table -->
+                    <table data-if="playerEcoDataLength > 0">
+                        <colgroup>
+                            <col style="width: 45%"/>
+                            <col style="width: 15%"/>
+                            <col style="width: 15%"/>
+                            <col style="width: 25%"/>
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <td>Player</td>
+                                <td>Mult</td>
+                                <td>Share</td>
+                                <td></td>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr data-for="player : ecoData"
+                                data-class-is-highlighted="player.isMe"
+                                data-class-is-threat-high="player.threatLevel == 'high'"
+                                data-class-is-threat-medium="player.threatLevel == 'medium'"
+                                data-class-is-threat-low="player.threatLevel == 'low'">
+                                <td>{{player.isMe ? '> ' : '  '}}{{player.name}}</td>
+                                <td>{{player.multiplierFormatted}}X</td>
+                                <td>{{player.percentageFormatted}}%</td>
+                                <td class="progress-cell">
+                                    <div class="progress-bar">
+                                        <div class="progress-fill" data-style-width="player.percentage + '%'"></div>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Damage Tab -->
+            <div id="tab-content-damage" data-if="activeTab == 'damage'" class="tab-panel">
+                <div class="tab-content-section">
+                    <h2>Player Damage to Queens</h2>
+
+                    <!-- Empty state -->
+                    <p data-if="bossData.playerDamagesLength == 0" class="text-dim">No data yet</p>
+
+                    <!-- Leaderboard table -->
+                    <table data-if="bossData.playerDamagesLength > 0">
+                        <colgroup>
+                            <col style="width: 15%"/>
+                            <col style="width: 50%"/>
+                            <col style="width: 20%"/>
+                            <col style="width: 15%"/>
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <td>Rank</td>
+                                <td>Player</td>
+                                <td>Dmg</td>
+                                <td>Rel</td>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr data-for="dmg, i : bossData.playerDamages">
+                                <td>{{i < 3 ? '#' + (i+1) : '#' + (i+1)}}</td>
+                                <td>{{dmg.name}}</td>
+                                <td class="neutral">{{dmg.damageFormatted}}</td>
+                                <td class="neutral">{{dmg.relative}}X</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Queens Tab -->
+            <div id="tab-content-queens" data-if="activeTab == 'queens'" class="tab-panel">
+                <div class="tab-content-section">
+                    <h2>Queen Health Status</h2>
+
+                    <!-- Empty state -->
+                    <p data-if="bossData.healthsLength == 0 && bossData.resistancesLength == 0" class="text-dim">No data yet</p>
+
+                    <!-- Boss health percentages (horizontal flow) -->
+                    <div data-if="bossData.healthsLength > 0" class="boss-health-grid">
+                        <span data-for="hp : bossData.healths"
+                                class="boss-health-item"
+                                data-style-color="hp.colorHex">
+                            {{hp.percentage}}%
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Resistances section -->
+                <div class="tab-content-section">
+                    <h2>Resistances (top 5 by damage)</h2>
+
+                    <!-- Empty state -->
+                    <p data-if="bossData.resistancesLength == 0" class="text-dim">No data yet</p>
+
+                    <table data-if="bossData.resistancesLength > 0">
+                        <colgroup>
+                            <col style="width: 60%"/>
+                            <col style="width: 20%"/>
+                            <col style="width: 20%"/>
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <td>Unit</td>
+                                <td>Resist</td>
+                                <td>Dmg</td>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr data-for="res, i : bossData.resistances" data-if="i < 5">
+                                <td>{{res.name}}</td>
+                                <td class="bad">{{res.percent * 100}}%</td>
+                                <td class="text-dim">{{res.damageFormatted}}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <!-- <div class="content mt-4 flex flex-col gap-6">
+            <p class="text-white">{{message}}</p>
+            <p class="text-gray-600">Time: {{currentTime}}</p>
+        </div> -->
+    </div>
+</body>
+</rml>

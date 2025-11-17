@@ -1,0 +1,8 @@
+[bundle]
+lua = "5.4"
+paths = [
+  "../harmony/?.lua",
+  "?.lua",
+]
+output = "../../dist/raptor-notifications/raptor-notifications.lua"
+diagnostics = true
