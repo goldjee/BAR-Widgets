@@ -24,8 +24,8 @@ local modOptions = Spring.GetModOptions()
 -- Constants
 local WIDGET_NAME = "raptor-panel"
 local MODEL_NAME = "raptor-panel_model"
-local RML_PATH = "LuaUI/Widgets/raptor-panel/raptor-panel.rml"
-local RCSS_PATH = "LuaUI/Widgets/raptor-panel/raptor-panel.rcss"
+local RML_PATH = "LuaUI/RmlWidgets/raptor-panel/raptor-panel.rml"
+local RCSS_PATH = "LuaUI/RmlWidgets/raptor-panel/raptor-panel.rcss"
 
 -- Widget state
 local document
