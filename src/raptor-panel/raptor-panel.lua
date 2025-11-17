@@ -12,7 +12,7 @@ function widget:GetInfo()
         date = "16.10.2025",
         layer = 0,
         enabled = true,
-        version = 3,
+        version = 4,
     }
 end
 
