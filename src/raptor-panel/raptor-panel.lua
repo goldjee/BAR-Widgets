@@ -16,12 +16,7 @@ function widget:GetInfo()
     }
 end
 
-local Harmony = require("harmony")
 local HarmonyRaptor = require("harmony-raptor")
-
-local function isRaptors()
-    return Spring.Utilities.Gametype.IsRaptors()
-end
 
 local modOptions = Spring.GetModOptions()
 
@@ -36,15 +31,8 @@ local document
 local dm_handle
 
 -- Game data
-local teamIDs = {}
 local raptorsTeamID
 local playerEcoAttractionsRaw = {}
-
--- Configuration
-local CONFIG = {
-    THREAT_HIGH = 1.7,
-    THREAT_MED = 1.2,
-}
 
 -- Boss colors for health bars (used for queen health visualization)
 local bossColors = {
@@ -173,67 +161,16 @@ local function updateGameInfo()
     dm_handle.queenCountKilled = info.queenCountKilled
     dm_handle.queenETA = formatTime(HarmonyRaptor.getQueenETA())
 
-    -- Calculate economy data
+    -- Calculate economy data (threat math lives in HarmonyRaptor)
     local myTeamId = Spring.GetMyTeamID()
-    local playerEcoData = {}
-    local sum = 0
+    local playerEcoData = HarmonyRaptor.getPlayerEcoThreat(playerEcoAttractionsRaw)
 
-    for i = 1, #teamIDs do
-        local teamID = teamIDs[i]
-        local playerName = Harmony.getPlayerName(teamID)
-
-        if
-            playerName
-            and playerName ~= ""
-            and not (playerName:find("Raptors") or playerName:find("Scavengers"))
-        then
-            local ecoValue = playerEcoAttractionsRaw[teamID] or 0
-            ecoValue = math.max(0, ecoValue)
-            sum = sum + ecoValue
-
-            table.insert(playerEcoData, {
-                name = playerName,
-                value = ecoValue,
-                teamID = teamID,
-                isMe = (myTeamId == teamID),
-            })
-        end
+    -- Layer presentation onto the computed threat data
+    for _, data in ipairs(playerEcoData) do
+        data.isMe = (myTeamId == data.teamID)
+        data.multiplierFormatted = string.format("%.1f", data.multiplier)
+        data.percentageFormatted = string.format("%.0f", data.percentage)
     end
-
-    -- Calculate percentages and multipliers
-    if sum > 0 then
-        for _, data in ipairs(playerEcoData) do
-            data.percentage = (data.value / sum) * 100
-            data.multiplier = (#playerEcoData * data.value) / sum
-
-            -- Add threat level based on multiplier thresholds
-            if data.multiplier > CONFIG.THREAT_HIGH then
-                data.threatLevel = "high"
-            elseif data.multiplier > CONFIG.THREAT_MED then
-                data.threatLevel = "medium"
-            else
-                data.threatLevel = "low"
-            end
-
-            -- Add formatted values for display
-            data.multiplierFormatted = string.format("%.1f", data.multiplier)
-            data.percentageFormatted = string.format("%.0f", data.percentage)
-        end
-    else
-        -- Set defaults when no eco value exists yet
-        for _, data in ipairs(playerEcoData) do
-            data.percentage = 0
-            data.multiplier = 0
-            data.threatLevel = "low"
-            data.multiplierFormatted = "0.0"
-            data.percentageFormatted = "0"
-        end
-    end
-
-    -- Sort by value descending
-    table.sort(playerEcoData, function(a, b)
-        return a.value > b.value
-    end)
 
     -- Update data model
     dm_handle.ecoData = playerEcoData
@@ -304,7 +241,7 @@ local function updateGameInfo()
 end
 
 function widget:Initialize()
-    if not isRaptors() then
+    if not HarmonyRaptor.isRaptors() then
         widgetHandler:RemoveWidget()
         return
     end
@@ -330,8 +267,6 @@ function widget:Initialize()
     -- Initialize team data
     raptorsTeamID = HarmonyRaptor.getRaptorsTeamID()
     local playerTeams = HarmonyRaptor.getPlayerTeams()
-
-    teamIDs = Spring.GetTeamList()
 
     for i = 1, #playerTeams do
         playerEcoAttractionsRaw[playerTeams[i]] = 0

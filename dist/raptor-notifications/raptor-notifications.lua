@@ -312,6 +312,11 @@ end
 -- Team & Player Utilities
 -- ========================================
 
+-- Returns true if the current game is a Raptors game
+function hr.isRaptors()
+    return Spring.Utilities.Gametype.IsRaptors()
+end
+
 -- Returns the Raptors/Gaia team ID
 function hr.getRaptorsTeamID()
     -- Check all teams for Raptors LuaAI
@@ -368,6 +373,10 @@ end
 
 -- Eco Value Calculation (Raptor Targeting)
 -- ========================================
+
+-- Threat level thresholds, expressed as eco multiplier relative to the average player
+local THREAT_HIGH = 1.7
+local THREAT_MED = 1.2
 
 -- Check if unit is an object (not counted for eco value)
 local isObject = {}
@@ -471,6 +480,55 @@ function hr.updatePlayerEcoValues(playerEcoTable, unitDefID, teamID, isAdd)
     end
 end
 
+-- Computes per-player eco threat from a raw eco attraction table.
+-- playerEcoAttractionsRaw: table of {teamID = rawEcoValue}
+-- Returns a list (sorted by value descending) of:
+--   { name, value, teamID, percentage, multiplier, threatLevel }
+-- where threatLevel is "high", "medium", or "low" based on the eco multiplier
+-- relative to the average player.
+function hr.getPlayerEcoThreat(playerEcoAttractionsRaw)
+    local playerEcoData = {}
+    local sum = 0
+
+    for _, teamID in ipairs(hr.getPlayerTeams()) do
+        local playerName = harmony.getPlayerName(teamID)
+        if playerName and playerName ~= "" then
+            local value = math.max(0, playerEcoAttractionsRaw[teamID] or 0)
+            sum = sum + value
+            table.insert(playerEcoData, {
+                name = playerName,
+                value = value,
+                teamID = teamID,
+            })
+        end
+    end
+
+    for _, data in ipairs(playerEcoData) do
+        if sum > 0 then
+            data.percentage = (data.value / sum) * 100
+            data.multiplier = (#playerEcoData * data.value) / sum
+        else
+            data.percentage = 0
+            data.multiplier = 0
+        end
+
+        if data.multiplier > THREAT_HIGH then
+            data.threatLevel = "high"
+        elseif data.multiplier > THREAT_MED then
+            data.threatLevel = "medium"
+        else
+            data.threatLevel = "low"
+        end
+    end
+
+    -- Sort by value descending
+    table.sort(playerEcoData, function(a, b)
+        return a.value > b.value
+    end)
+
+    return playerEcoData
+end
+
 return hr
 end
 
@@ -488,6 +546,7 @@ function widget:GetInfo()
     }
 end
 
+local Harmony = require("harmony")
 local HarmonyRaptor = require("harmony-raptor")
 
 local isDebug = false
@@ -509,14 +568,6 @@ local queenHatchNotified60 = false
 local queenHatchNotified80 = false
 local queenHatchNotified100 = false
 
-local function isRaptors()
-    return Spring.Utilities.Gametype.IsRaptors()
-end
-
-local function isSpectating()
-    return Spring.GetSpectatingState() or Spring.IsReplay()
-end
-
 local function notify(msg)
     Spring.PlaySoundFile(notificationSound, 1.0, "ui")
     if isDebug then
@@ -526,7 +577,7 @@ local function notify(msg)
 end
 
 function widget:Initialize()
-    if not isRaptors() or (not isDebug and isSpectating()) then
+    if not HarmonyRaptor.isRaptors() or (not isDebug and Harmony.isSpectating()) then
         widgetHandler:RemoveWidget()
         return
     end
@@ -540,6 +591,7 @@ function widget:GameFrame(n)
         local gameInfo = HarmonyRaptor.getGameInfo()
         local stage = gameInfo.stage
         local gracePeriodRemaining = gameInfo.gracePeriodRemaining
+        local queenHatchProgress = gameInfo.queenHatchProgress
 
         if stage == "grace" then
             if not gameStartNotified then
@@ -551,11 +603,11 @@ function widget:GameFrame(n)
                 firstWaveNotified = true
             end
         elseif stage == "main" then
-            if gracePeriodRemaining >= 60 and not queenHatchNotified60 then
+            if queenHatchProgress >= 60 and not queenHatchNotified60 then
                 notify(queenHatchNotification60)
                 queenHatchNotified60 = true
             end
-            if gracePeriodRemaining >= 80 and not queenHatchNotified80 then
+            if queenHatchProgress >= 80 and not queenHatchNotified80 then
                 notify(queenHatchNotification80)
                 queenHatchNotified80 = true
             end

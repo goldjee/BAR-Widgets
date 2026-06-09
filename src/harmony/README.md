@@ -139,6 +139,11 @@ Returns `true` if the given unit def name is a Queenling (mini queen variant).
 
 #### Team & Player Utilities
 
+**`hr.isRaptors()`**
+Returns `true` if the current game is a Raptors game. Thin wrapper around
+`Spring.Utilities.Gametype.IsRaptors()` — use it to guard widget initialization so the widget
+self-removes in non-raptor games.
+
 **`hr.getRaptorsTeamID()`**
 Returns the Raptors/Gaia team ID. Checks all teams for Raptors LuaAI, falls back to Gaia team.
 
@@ -168,6 +173,28 @@ Updates player eco values when units are created/destroyed.
 - **unitDefID**: the unit definition ID
 - **teamID**: the team owning the unit
 - **isAdd**: `true` to add eco value, `false` to subtract
+
+**`hr.getPlayerEcoThreat(playerEcoAttractionsRaw)`**
+Computes per-player eco threat from a raw eco attraction table (the `{teamID = ecoValue}` table
+maintained via `hr.updatePlayerEcoValues`). Returns a list **sorted by value descending** of:
+
+```lua
+{
+    {
+        name = string,         -- player/AI name
+        value = number,        -- eco attraction value (clamped to >= 0)
+        teamID = number,
+        percentage = number,   -- share of total eco (0-100)
+        multiplier = number,   -- eco relative to the average player
+        threatLevel = string,  -- "high" (>1.7x), "medium" (>1.2x), or "low"
+    },
+    -- ...
+}
+```
+
+Only includes named player teams (uses `hr.getPlayerTeams()` + `harmony.getPlayerName()`
+internally, so Raptors/Scavengers/Gaia are excluded). Threat math (percentage, multiplier,
+threshold classification) lives here so widgets only need to add presentation formatting.
 
 **Example:**
 ```lua

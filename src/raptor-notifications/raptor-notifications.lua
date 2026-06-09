@@ -10,6 +10,7 @@ function widget:GetInfo()
     }
 end
 
+local Harmony = require("harmony")
 local HarmonyRaptor = require("harmony-raptor")
 
 local isDebug = false
@@ -31,14 +32,6 @@ local queenHatchNotified60 = false
 local queenHatchNotified80 = false
 local queenHatchNotified100 = false
 
-local function isRaptors()
-    return Spring.Utilities.Gametype.IsRaptors()
-end
-
-local function isSpectating()
-    return Spring.GetSpectatingState() or Spring.IsReplay()
-end
-
 local function notify(msg)
     Spring.PlaySoundFile(notificationSound, 1.0, "ui")
     if isDebug then
@@ -48,7 +41,7 @@ local function notify(msg)
 end
 
 function widget:Initialize()
-    if not isRaptors() or (not isDebug and isSpectating()) then
+    if not HarmonyRaptor.isRaptors() or (not isDebug and Harmony.isSpectating()) then
         widgetHandler:RemoveWidget()
         return
     end
@@ -62,6 +55,7 @@ function widget:GameFrame(n)
         local gameInfo = HarmonyRaptor.getGameInfo()
         local stage = gameInfo.stage
         local gracePeriodRemaining = gameInfo.gracePeriodRemaining
+        local queenHatchProgress = gameInfo.queenHatchProgress
 
         if stage == "grace" then
             if not gameStartNotified then
@@ -73,11 +67,11 @@ function widget:GameFrame(n)
                 firstWaveNotified = true
             end
         elseif stage == "main" then
-            if gracePeriodRemaining >= 60 and not queenHatchNotified60 then
+            if queenHatchProgress >= 60 and not queenHatchNotified60 then
                 notify(queenHatchNotification60)
                 queenHatchNotified60 = true
             end
-            if gracePeriodRemaining >= 80 and not queenHatchNotified80 then
+            if queenHatchProgress >= 80 and not queenHatchNotified80 then
                 notify(queenHatchNotification80)
                 queenHatchNotified80 = true
             end

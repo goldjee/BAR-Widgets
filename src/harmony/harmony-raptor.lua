@@ -229,6 +229,11 @@ end
 -- Team & Player Utilities
 -- ========================================
 
+-- Returns true if the current game is a Raptors game
+function hr.isRaptors()
+    return Spring.Utilities.Gametype.IsRaptors()
+end
+
 -- Returns the Raptors/Gaia team ID
 function hr.getRaptorsTeamID()
     -- Check all teams for Raptors LuaAI
@@ -285,6 +290,10 @@ end
 
 -- Eco Value Calculation (Raptor Targeting)
 -- ========================================
+
+-- Threat level thresholds, expressed as eco multiplier relative to the average player
+local THREAT_HIGH = 1.7
+local THREAT_MED = 1.2
 
 -- Check if unit is an object (not counted for eco value)
 local isObject = {}
@@ -386,6 +395,55 @@ function hr.updatePlayerEcoValues(playerEcoTable, unitDefID, teamID, isAdd)
             playerEcoTable[teamID] = playerEcoTable[teamID] - ecoValue
         end
     end
+end
+
+-- Computes per-player eco threat from a raw eco attraction table.
+-- playerEcoAttractionsRaw: table of {teamID = rawEcoValue}
+-- Returns a list (sorted by value descending) of:
+--   { name, value, teamID, percentage, multiplier, threatLevel }
+-- where threatLevel is "high", "medium", or "low" based on the eco multiplier
+-- relative to the average player.
+function hr.getPlayerEcoThreat(playerEcoAttractionsRaw)
+    local playerEcoData = {}
+    local sum = 0
+
+    for _, teamID in ipairs(hr.getPlayerTeams()) do
+        local playerName = harmony.getPlayerName(teamID)
+        if playerName and playerName ~= "" then
+            local value = math.max(0, playerEcoAttractionsRaw[teamID] or 0)
+            sum = sum + value
+            table.insert(playerEcoData, {
+                name = playerName,
+                value = value,
+                teamID = teamID,
+            })
+        end
+    end
+
+    for _, data in ipairs(playerEcoData) do
+        if sum > 0 then
+            data.percentage = (data.value / sum) * 100
+            data.multiplier = (#playerEcoData * data.value) / sum
+        else
+            data.percentage = 0
+            data.multiplier = 0
+        end
+
+        if data.multiplier > THREAT_HIGH then
+            data.threatLevel = "high"
+        elseif data.multiplier > THREAT_MED then
+            data.threatLevel = "medium"
+        else
+            data.threatLevel = "low"
+        end
+    end
+
+    -- Sort by value descending
+    table.sort(playerEcoData, function(a, b)
+        return a.value > b.value
+    end)
+
+    return playerEcoData
 end
 
 return hr
