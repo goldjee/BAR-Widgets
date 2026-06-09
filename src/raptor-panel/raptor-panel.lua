@@ -19,6 +19,10 @@ end
 local Harmony = require("harmony")
 local HarmonyRaptor = require("harmony-raptor")
 
+local function isRaptors()
+    return Spring.Utilities.Gametype.IsRaptors()
+end
+
 local modOptions = Spring.GetModOptions()
 
 -- Constants
@@ -300,6 +304,11 @@ local function updateGameInfo()
 end
 
 function widget:Initialize()
+    if not isRaptors() then
+        widgetHandler:RemoveWidget()
+        return
+    end
+
     -- log(WIDGET_NAME .. ": Initializing widget...")
 
     -- Get the shared RML context
