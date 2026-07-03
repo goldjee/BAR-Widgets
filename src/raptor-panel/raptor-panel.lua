@@ -80,6 +80,9 @@ local init_model = {
     queenCount = 0,
     queenHealth = 0,
     queenCountKilled = 0,
+    queenStaggerActive = false,
+    queenStaggerPercentage = 0,
+    queenDamageMultiplier = "1",
 
     ecoData = {},
 
@@ -155,6 +158,10 @@ local function updateGameInfo()
     dm_handle.queenHealth = info.queenHealth
     dm_handle.queenCount = info.queenCount
     dm_handle.queenCountKilled = info.queenCountKilled
+    dm_handle.queenStaggerActive = info.queenStaggerActive or false
+    dm_handle.queenStaggerPercentage = info.queenStaggerPercentage or 0
+    dm_handle.queenDamageMultiplier =
+        string.format("%.2g", HarmonyRaptor.getQueenDamageMultiplier())
 
     -- nil ETA in main stage means zero anger gain (infinite time)
     local queenETA = HarmonyRaptor.getQueenETA()

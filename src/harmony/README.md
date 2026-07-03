@@ -71,6 +71,8 @@ Returns the `gameInfo` table containing current raptor game state. This table in
     queenCountKilled = number,     -- Number of queens killed (nil if not tracked)
     queenTime = number,            -- Time when queen spawned
     queenHatchProgress = number,   -- Queen spawn progress percentage (0-100)
+    queenStaggerActive = boolean,  -- true while queens are staggered (paralyzed, resistances halved)
+    queenStaggerPercentage = number, -- Stagger bar remaining (0-100); recovery progress while staggered
 
     -- Current game phase
     stage = string,                -- "grace", "main", or "boss"
@@ -87,6 +89,9 @@ The `gameInfo` table provides a comprehensive snapshot of the current raptor gam
 
 **`hr.getQueenETA()`**
 Returns estimated time until queen spawns (in seconds), or `nil` if not in main stage or if the anger gain rate is zero (infinite time).
+
+**`hr.getQueenDamageMultiplier()`**
+Returns the multiplier the base game applies to player damage against queens, based on total queen health ("bosses get stronger the less health they have"): `>50%: x2`, `>25%: x1`, `>10%: x0.75`, `>5%: x0.5`, `<=5%: x0.25`. Returns `1` outside the boss stage.
 
 **`hr.getBossInfo()`**
 Returns comprehensive boss/queen information with guaranteed structure. Always returns a table with the following fields, even when no boss data is available yet:

@@ -42,6 +42,9 @@
                 <div class="progress-bar">
                     <div class="progress-fill bad" data-style-width="queenHealth + '%'"></div>
                 </div>
+                <p>Queens take {{queenDamageMultiplier}}x damage</p>
+                <p data-if="queenStaggerActive" class="warning">STAGGERED! Resistances halved, recovery: {{queenStaggerPercentage}}%</p>
+                <p data-if="!queenStaggerActive" class="text-sm text-dim">Stagger bar: {{queenStaggerPercentage}}%</p>
                 <p>Evolution: {{angerTech}}%</p>
             </div>
         </div>

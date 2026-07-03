@@ -131,6 +131,12 @@ function hr.updateGameInfo()
     gameInfo.queenCountKilled = getGameRule("raptorQueensKilled")
     gameInfo.queenTime = getGameRule("raptorQueenTime")
 
+    -- Queen stagger (base game PR #7825): depleting the stagger bar paralyzes
+    -- queens and halves their resistances for the stagger duration
+    gameInfo.queenStaggerPercentage = getGameRule("raptorQueenStaggerPercentage")
+    local staggerActive = Spring.GetGameRulesParam("raptorQueenStaggerActive")
+    gameInfo.queenStaggerActive = staggerActive == true or staggerActive == 1
+
     local modOptions = Spring.GetModOptions()
 
     -- Queen count
@@ -203,6 +209,29 @@ function hr.getQueenETA()
 
     local angerRemaining = 100 - currentAnger
     return angerRemaining / gainRate
+end
+
+-- Returns the multiplier applied to player damage against queens, based on
+-- total queen health. Mirrors the base game's raptor_spawner_defense.lua
+-- ("bosses get stronger the less health they have"):
+-- >50%: x2, >25%: x1, >10%: x0.75, >5%: x0.5, <=5%: x0.25
+function hr.getQueenDamageMultiplier()
+    local hp = gameInfo.queenHealth
+    if gameInfo.stage ~= "boss" or not hp then
+        return 1
+    end
+
+    if hp > 50 then
+        return 2
+    elseif hp > 25 then
+        return 1
+    elseif hp > 10 then
+        return 0.75
+    elseif hp > 5 then
+        return 0.5
+    else
+        return 0.25
+    end
 end
 
 -- Unit utilities
