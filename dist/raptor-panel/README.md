@@ -83,5 +83,6 @@ Provides detailed information about active queen bosses and their vulnerabilitie
 
 #### Resistance Analysis
 
-- **Resistance Percentage** - How much damage is mitigated (0-100%)
+- **Resistance Percentage** - Raw per-weapon resistance built up by the queens (capped at 95%)
+- **Effective Resistance** - Actual mitigation after the queens' health-phase damage multiplier and stagger state are applied (`applied = raw * phaseMult * (1 - resist)`); can exceed 95% at low queen health or go negative while queens take double damage
 - **Total Damage Received** - Amount of damage dealt by that unit type

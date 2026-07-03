@@ -219,6 +219,9 @@ local function updateGameInfo()
             table.insert(resistances, {
                 name = res.name,
                 percent = res.percent,
+                percentFormatted = string.format("%.0f", res.percent * 100),
+                -- negative = queens currently take extra damage from this weapon
+                effectiveFormatted = string.format("%.0f", res.effectivePercent * 100),
                 damage = res.damage,
                 damageFormatted = formatNumber(res.damage),
             })

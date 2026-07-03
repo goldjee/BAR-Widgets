@@ -276,12 +276,19 @@ function hr.getBossInfo()
     bossInfoRaw = decoded
 
     -- Process resistances
+    -- The game applies the health-phase multiplier BEFORE resistance:
+    -- applied = raw * phaseMult * (1 - resist [* 0.5 while staggered]),
+    -- so effective resistance differs from the raw percent (e.g. 95% resist
+    -- at the x0.25 phase means 98.75% of raw damage is mitigated)
+    local phaseMult = hr.getQueenDamageMultiplier()
+    local staggerFactor = gameInfo.queenStaggerActive and 0.5 or 1
     for defID, resistance in pairs(bossInfoRaw.resistances or {}) do
         local def = UnitDefs[tonumber(defID)]
         if def and resistance.percent >= 0.1 then
             table.insert(result.resistances, {
                 name = def.translatedHumanName,
                 percent = resistance.percent,
+                effectivePercent = 1 - (1 - resistance.percent * staggerFactor) * phaseMult,
                 damage = resistance.damage,
             })
         end

@@ -99,7 +99,7 @@ Returns comprehensive boss/queen information with guaranteed structure. Always r
 ```lua
 {
     resistances = {
-        {name = string, percent = number, damage = number},
+        {name = string, percent = number, effectivePercent = number, damage = number},
         -- ... sorted by damage dealt (descending)
     },
     playerDamages = {
@@ -117,6 +117,7 @@ Returns comprehensive boss/queen information with guaranteed structure. Always r
 - Safely parses boss info JSON with error handling
 - Returns empty arrays when boss data not available (before boss spawns)
 - Filters resistances to show only those >= 10%
+- `effectivePercent` folds the health-phase damage multiplier and stagger state into the raw resistance: the game computes `applied = raw * phaseMult * (1 - percent [* 0.5 while staggered])`, so `effectivePercent = 1 - (1 - percent * staggerFactor) * phaseMult`. Can exceed `percent` at low queen health (e.g. 95% resist at the x0.25 phase = 98.75% effective) or go negative early on when queens take double damage
 - Calculates relative damage as a fraction of total damage
 - Automatically sorts all arrays for easy consumption
 
