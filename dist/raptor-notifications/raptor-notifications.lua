@@ -109,17 +109,6 @@ local miniBossNames = {
     raptor_consort = "Raptor Consort",
     raptor_doombringer = "Doombringer",
 }
-local miniBossDescriptions = {
-    raptor_miniq_a = "Majestic and bold, ruler of the hunt.",
-    raptor_miniq_b = "Swift and sharp, a noble among raptors.",
-    raptor_miniq_c = "Refined tastes. Likes her prey rare.",
-    raptor_mama_ba = "Claws charged with vengeance.",
-    raptor_mama_fi = "A firestorm of maternal wrath.",
-    raptor_mama_el = "Crackling with rage, ready to strike.",
-    raptor_mama_ac = "Acid-fueled, melting everything in sight.",
-    raptor_consort = "Sneaky powerful little terror.",
-    raptor_doombringer = "Your time is up. The Queens called for backup.",
-}
 
 -- Main game info functions
 -- ========================================
@@ -132,7 +121,6 @@ end
 -- Updates the gameInfo table with the latest game rules parameters
 function hr.updateGameInfo()
     -- Main settings
-    gameInfo.difficulty = getGameRule("raptorDifficulty")
     gameInfo.gracePeriod = getGameRule("raptorGracePeriod")
     gameInfo.anger = getGameRule("raptorQueenAnger")
     gameInfo.angerTech = getGameRule("raptorTechAnger")
@@ -210,7 +198,7 @@ function hr.getQueenETA()
     local gainRate = gameInfo.angerGainBase + gameInfo.angerGainAggression + gameInfo.angerGainEco
 
     if gainRate <= 0 then
-        return 999999 -- Infinite time if no anger gain
+        return nil -- Infinite time if no anger gain
     end
 
     local angerRemaining = 100 - currentAnger
@@ -260,10 +248,10 @@ function hr.getBossInfo()
 
     -- Process resistances
     for defID, resistance in pairs(bossInfoRaw.resistances or {}) do
-        if resistance.percent >= 0.1 then
-            local name = UnitDefs[tonumber(defID)].translatedHumanName
+        local def = UnitDefs[tonumber(defID)]
+        if def and resistance.percent >= 0.1 then
             table.insert(result.resistances, {
-                name = name,
+                name = def.translatedHumanName,
                 percent = resistance.percent,
                 damage = resistance.damage,
             })
@@ -378,19 +366,13 @@ end
 local THREAT_HIGH = 1.7
 local THREAT_MED = 1.2
 
--- Check if unit is an object (not counted for eco value)
-local isObject = {}
-for udefID, def in ipairs(UnitDefs) do
-    if def.modCategories["object"] or def.customParams.objectify then
-        isObject[udefID] = true
-    end
-end
-
 -- Calculate eco attraction value for a unit definition
 local function calculateEcoValueForDef(unitDef)
+    local isObject = unitDef.modCategories["object"]
+        or (unitDef.customParams and unitDef.customParams.objectify)
     if
         (unitDef.canMove and not (unitDef.customParams and unitDef.customParams.iscommander))
-        or isObject[unitDef.name]
+        or isObject
     then
         return 0
     end
@@ -534,6 +516,8 @@ end
 
 -- root module: __root
 __B_MODULES['__root'] = function(require)
+local widget = widget ---@type Widget
+
 function widget:GetInfo()
     return {
         name = "Raptor Timing Notifications",
@@ -573,6 +557,8 @@ local function notify(msg)
     if isDebug then
         Spring.Echo("Raptor Notification: " .. msg)
     end
+    -- Intentionally broadcasts to ally chat so the whole team sees the reminder;
+    -- teammates running this widget too will produce duplicate messages.
     Spring.SendCommands("say a: " .. msg)
 end
 
@@ -597,8 +583,9 @@ function widget:GameFrame(n)
             if not gameStartNotified then
                 notify(gameStartNotification)
                 gameStartNotified = true
-            end
-            if gracePeriodRemaining <= 6 * 60 and not firstWaveNotified then
+            -- elseif staggers this from the game-start notification when the
+            -- grace period is shorter than 6 minutes
+            elseif gracePeriodRemaining <= 6 * 60 and not firstWaveNotified then
                 notify(firstWaveNotification)
                 firstWaveNotified = true
             end

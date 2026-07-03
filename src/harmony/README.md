@@ -56,7 +56,6 @@ Returns the `gameInfo` table containing current raptor game state. This table in
 ```lua
 {
     -- Basic settings
-    difficulty = number,           -- Raptor difficulty setting
     gracePeriod = number,          -- Grace period duration (seconds)
 
     -- Anger system
@@ -87,7 +86,7 @@ The `gameInfo` table provides a comprehensive snapshot of the current raptor gam
 #### Queen & Boss Functions
 
 **`hr.getQueenETA()`**
-Returns estimated time until queen spawns (in seconds), or `nil` if not in main stage. Returns 999999 if anger gain rate is zero (infinite time).
+Returns estimated time until queen spawns (in seconds), or `nil` if not in main stage or if the anger gain rate is zero (infinite time).
 
 **`hr.getBossInfo()`**
 Returns comprehensive boss/queen information with guaranteed structure. Always returns a table with the following fields, even when no boss data is available yet:
@@ -127,15 +126,15 @@ Returns `true` if the given unit def name is a mini boss.
 Returns `true` if the given unit def name is a Queenling (mini queen variant).
 
 **Supported Mini Bosses:**
-- `raptor_miniq_a` - Queenling Prima - "Majestic and bold, ruler of the hunt."
-- `raptor_miniq_b` - Queenling Secunda - "Swift and sharp, a noble among raptors."
-- `raptor_miniq_c` - Queenling Tertia - "Refined tastes. Likes her prey rare."
-- `raptor_mama_ba` - Matrona - "Claws charged with vengeance."
-- `raptor_mama_fi` - Pyro Matrona - "A firestorm of maternal wrath."
-- `raptor_mama_el` - Paralyzing Matrona - "Crackling with rage, ready to strike."
-- `raptor_mama_ac` - Acid Matrona - "Acid-fueled, melting everything in sight."
-- `raptor_consort` - Raptor Consort - "Sneaky powerful little terror."
-- `raptor_doombringer` - Doombringer - "Your time is up. The Queens called for backup."
+- `raptor_miniq_a` - Queenling Prima
+- `raptor_miniq_b` - Queenling Secunda
+- `raptor_miniq_c` - Queenling Tertia
+- `raptor_mama_ba` - Matrona
+- `raptor_mama_fi` - Pyro Matrona
+- `raptor_mama_el` - Paralyzing Matrona
+- `raptor_mama_ac` - Acid Matrona
+- `raptor_consort` - Raptor Consort
+- `raptor_doombringer` - Doombringer
 
 #### Team & Player Utilities
 

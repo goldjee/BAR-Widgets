@@ -109,17 +109,6 @@ local miniBossNames = {
     raptor_consort = "Raptor Consort",
     raptor_doombringer = "Doombringer",
 }
-local miniBossDescriptions = {
-    raptor_miniq_a = "Majestic and bold, ruler of the hunt.",
-    raptor_miniq_b = "Swift and sharp, a noble among raptors.",
-    raptor_miniq_c = "Refined tastes. Likes her prey rare.",
-    raptor_mama_ba = "Claws charged with vengeance.",
-    raptor_mama_fi = "A firestorm of maternal wrath.",
-    raptor_mama_el = "Crackling with rage, ready to strike.",
-    raptor_mama_ac = "Acid-fueled, melting everything in sight.",
-    raptor_consort = "Sneaky powerful little terror.",
-    raptor_doombringer = "Your time is up. The Queens called for backup.",
-}
 
 -- Main game info functions
 -- ========================================
@@ -132,7 +121,6 @@ end
 -- Updates the gameInfo table with the latest game rules parameters
 function hr.updateGameInfo()
     -- Main settings
-    gameInfo.difficulty = getGameRule("raptorDifficulty")
     gameInfo.gracePeriod = getGameRule("raptorGracePeriod")
     gameInfo.anger = getGameRule("raptorQueenAnger")
     gameInfo.angerTech = getGameRule("raptorTechAnger")
@@ -210,7 +198,7 @@ function hr.getQueenETA()
     local gainRate = gameInfo.angerGainBase + gameInfo.angerGainAggression + gameInfo.angerGainEco
 
     if gainRate <= 0 then
-        return 999999 -- Infinite time if no anger gain
+        return nil -- Infinite time if no anger gain
     end
 
     local angerRemaining = 100 - currentAnger
@@ -260,10 +248,10 @@ function hr.getBossInfo()
 
     -- Process resistances
     for defID, resistance in pairs(bossInfoRaw.resistances or {}) do
-        if resistance.percent >= 0.1 then
-            local name = UnitDefs[tonumber(defID)].translatedHumanName
+        local def = UnitDefs[tonumber(defID)]
+        if def and resistance.percent >= 0.1 then
             table.insert(result.resistances, {
-                name = name,
+                name = def.translatedHumanName,
                 percent = resistance.percent,
                 damage = resistance.damage,
             })
@@ -378,19 +366,13 @@ end
 local THREAT_HIGH = 1.7
 local THREAT_MED = 1.2
 
--- Check if unit is an object (not counted for eco value)
-local isObject = {}
-for udefID, def in ipairs(UnitDefs) do
-    if def.modCategories["object"] or def.customParams.objectify then
-        isObject[udefID] = true
-    end
-end
-
 -- Calculate eco attraction value for a unit definition
 local function calculateEcoValueForDef(unitDef)
+    local isObject = unitDef.modCategories["object"]
+        or (unitDef.customParams and unitDef.customParams.objectify)
     if
         (unitDef.canMove and not (unitDef.customParams and unitDef.customParams.iscommander))
-        or isObject[unitDef.name]
+        or isObject
     then
         return 0
     end
@@ -560,7 +542,6 @@ local modOptions = Spring.GetModOptions()
 local WIDGET_NAME = "raptor-panel"
 local MODEL_NAME = "raptor-panel_model"
 local RML_PATH = "LuaUI/RmlWidgets/raptor-panel/raptor-panel.rml"
-local RCSS_PATH = "LuaUI/RmlWidgets/raptor-panel/raptor-panel.rcss"
 
 -- Widget state
 local document
@@ -633,7 +614,6 @@ local init_model = {
 
 -- Utility Functions
 local function log(msg)
-    -- Spring.SendCommands("say a: " .. msg)
     Spring.Echo(WIDGET_NAME .. ": " .. msg)
 end
 
@@ -661,13 +641,10 @@ local function formatTime(seconds)
     local minutes = math.floor(seconds / 60)
     local secs = math.floor(seconds % 60)
 
-    if minutes > 0 and secs > 0 then
+    if minutes > 0 then
         return minutes .. "m " .. secs .. "s"
-    elseif minutes > 0 then
-        return minutes .. " m" .. (minutes > 1 and "s" or "")
-    else
-        return secs .. " s"
     end
+    return secs .. "s"
 end
 
 local function updateGameInfo()
@@ -691,11 +668,15 @@ local function updateGameInfo()
     dm_handle.angerGainBase = info.angerGainBase
     dm_handle.angerGainEco = info.angerGainEco
     dm_handle.angerGainAggression = info.angerGainAggression
-    dm_handle.angerGainTotal = info.angerGainBase + info.angerGainEco + info.angerGainAggression
+    dm_handle.angerGainTotal =
+        string.format("%.2f", info.angerGainBase + info.angerGainEco + info.angerGainAggression)
     dm_handle.queenHealth = info.queenHealth
     dm_handle.queenCount = info.queenCount
     dm_handle.queenCountKilled = info.queenCountKilled
-    dm_handle.queenETA = formatTime(HarmonyRaptor.getQueenETA())
+
+    -- nil ETA in main stage means zero anger gain (infinite time)
+    local queenETA = HarmonyRaptor.getQueenETA()
+    dm_handle.queenETA = queenETA and formatTime(queenETA) or "∞"
 
     -- Calculate economy data (threat math lives in HarmonyRaptor)
     local myTeamId = Spring.GetMyTeamID()
@@ -722,22 +703,13 @@ local function updateGameInfo()
 
     -- Only populate arrays if boss data is available
     if bossInfo then
-        -- Process player damages with formatted values
-        local totalDamage = 0
-
-        -- Calculate total damage first
+        -- Process player damages with formatted values (relative is computed in HarmonyRaptor)
         for _, dmg in ipairs(bossInfo.playerDamages) do
-            totalDamage = totalDamage + dmg.damage
-        end
-
-        -- Process each player's damage
-        for _, dmg in ipairs(bossInfo.playerDamages) do
-            local relativeValue = totalDamage > 0 and (dmg.damage / totalDamage) or 0
             table.insert(playerDamages, {
                 name = dmg.name,
                 damage = dmg.damage,
                 damageFormatted = formatNumber(dmg.damage),
-                relative = string.format("%.1f", dmg.relative or relativeValue),
+                relative = string.format("%.1f", dmg.relative),
             })
         end
 
@@ -782,8 +754,6 @@ function widget:Initialize()
         return
     end
 
-    -- log(WIDGET_NAME .. ": Initializing widget...")
-
     -- Get the shared RML context
     widget.rmlContext = RmlUi.GetContext("shared")
     if not widget.rmlContext then
@@ -797,8 +767,6 @@ function widget:Initialize()
         log("ERROR - Failed to create data model")
         return false
     end
-
-    -- log("Data model created successfully")
 
     -- Initialize team data
     raptorsTeamID = HarmonyRaptor.getRaptorsTeamID()
@@ -842,14 +810,10 @@ function widget:Initialize()
     document:ReloadStyleSheet()
     document:Show()
 
-    -- log(WIDGET_NAME .. ": Widget initialized successfully")
-
     return true
 end
 
 function widget:Shutdown()
-    -- log(WIDGET_NAME .. ": Shutting down widget...")
-
     -- Clean up data model
     if widget.rmlContext and dm_handle then
         widget.rmlContext:RemoveDataModel(MODEL_NAME)
@@ -863,7 +827,6 @@ function widget:Shutdown()
     end
 
     widget.rmlContext = nil
-    -- log(WIDGET_NAME .. ": Shutdown complete")
 end
 
 function widget:GameFrame(n)
@@ -874,7 +837,6 @@ end
 
 -- Widget functions callable from RML
 function widget:Reload()
-    -- log(WIDGET_NAME .. ": Reloading widget...")
     widget:Shutdown()
     widget:Initialize()
 end
@@ -885,10 +847,8 @@ function widget:ToggleDebugger()
 
         if dm_handle.debugMode then
             RmlUi.SetDebugContext("shared")
-            -- log(WIDGET_NAME .. ": RmlUi debugger enabled")
         else
             RmlUi.SetDebugContext(nil)
-            -- log(WIDGET_NAME .. ": RmlUi debugger disabled")
         end
     end
 end

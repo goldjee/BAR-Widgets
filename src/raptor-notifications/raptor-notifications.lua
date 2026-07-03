@@ -1,3 +1,5 @@
+local widget = widget ---@type Widget
+
 function widget:GetInfo()
     return {
         name = "Raptor Timing Notifications",
@@ -37,6 +39,8 @@ local function notify(msg)
     if isDebug then
         Spring.Echo("Raptor Notification: " .. msg)
     end
+    -- Intentionally broadcasts to ally chat so the whole team sees the reminder;
+    -- teammates running this widget too will produce duplicate messages.
     Spring.SendCommands("say a: " .. msg)
 end
 
@@ -61,8 +65,9 @@ function widget:GameFrame(n)
             if not gameStartNotified then
                 notify(gameStartNotification)
                 gameStartNotified = true
-            end
-            if gracePeriodRemaining <= 6 * 60 and not firstWaveNotified then
+            -- elseif staggers this from the game-start notification when the
+            -- grace period is shorter than 6 minutes
+            elseif gracePeriodRemaining <= 6 * 60 and not firstWaveNotified then
                 notify(firstWaveNotification)
                 firstWaveNotified = true
             end

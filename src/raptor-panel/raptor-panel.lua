@@ -24,7 +24,6 @@ local modOptions = Spring.GetModOptions()
 local WIDGET_NAME = "raptor-panel"
 local MODEL_NAME = "raptor-panel_model"
 local RML_PATH = "LuaUI/RmlWidgets/raptor-panel/raptor-panel.rml"
-local RCSS_PATH = "LuaUI/RmlWidgets/raptor-panel/raptor-panel.rcss"
 
 -- Widget state
 local document
@@ -97,7 +96,6 @@ local init_model = {
 
 -- Utility Functions
 local function log(msg)
-    -- Spring.SendCommands("say a: " .. msg)
     Spring.Echo(WIDGET_NAME .. ": " .. msg)
 end
 
@@ -125,13 +123,10 @@ local function formatTime(seconds)
     local minutes = math.floor(seconds / 60)
     local secs = math.floor(seconds % 60)
 
-    if minutes > 0 and secs > 0 then
+    if minutes > 0 then
         return minutes .. "m " .. secs .. "s"
-    elseif minutes > 0 then
-        return minutes .. " m" .. (minutes > 1 and "s" or "")
-    else
-        return secs .. " s"
     end
+    return secs .. "s"
 end
 
 local function updateGameInfo()
@@ -155,11 +150,15 @@ local function updateGameInfo()
     dm_handle.angerGainBase = info.angerGainBase
     dm_handle.angerGainEco = info.angerGainEco
     dm_handle.angerGainAggression = info.angerGainAggression
-    dm_handle.angerGainTotal = info.angerGainBase + info.angerGainEco + info.angerGainAggression
+    dm_handle.angerGainTotal =
+        string.format("%.2f", info.angerGainBase + info.angerGainEco + info.angerGainAggression)
     dm_handle.queenHealth = info.queenHealth
     dm_handle.queenCount = info.queenCount
     dm_handle.queenCountKilled = info.queenCountKilled
-    dm_handle.queenETA = formatTime(HarmonyRaptor.getQueenETA())
+
+    -- nil ETA in main stage means zero anger gain (infinite time)
+    local queenETA = HarmonyRaptor.getQueenETA()
+    dm_handle.queenETA = queenETA and formatTime(queenETA) or "∞"
 
     -- Calculate economy data (threat math lives in HarmonyRaptor)
     local myTeamId = Spring.GetMyTeamID()
@@ -186,22 +185,13 @@ local function updateGameInfo()
 
     -- Only populate arrays if boss data is available
     if bossInfo then
-        -- Process player damages with formatted values
-        local totalDamage = 0
-
-        -- Calculate total damage first
+        -- Process player damages with formatted values (relative is computed in HarmonyRaptor)
         for _, dmg in ipairs(bossInfo.playerDamages) do
-            totalDamage = totalDamage + dmg.damage
-        end
-
-        -- Process each player's damage
-        for _, dmg in ipairs(bossInfo.playerDamages) do
-            local relativeValue = totalDamage > 0 and (dmg.damage / totalDamage) or 0
             table.insert(playerDamages, {
                 name = dmg.name,
                 damage = dmg.damage,
                 damageFormatted = formatNumber(dmg.damage),
-                relative = string.format("%.1f", dmg.relative or relativeValue),
+                relative = string.format("%.1f", dmg.relative),
             })
         end
 
@@ -246,8 +236,6 @@ function widget:Initialize()
         return
     end
 
-    -- log(WIDGET_NAME .. ": Initializing widget...")
-
     -- Get the shared RML context
     widget.rmlContext = RmlUi.GetContext("shared")
     if not widget.rmlContext then
@@ -261,8 +249,6 @@ function widget:Initialize()
         log("ERROR - Failed to create data model")
         return false
     end
-
-    -- log("Data model created successfully")
 
     -- Initialize team data
     raptorsTeamID = HarmonyRaptor.getRaptorsTeamID()
@@ -306,14 +292,10 @@ function widget:Initialize()
     document:ReloadStyleSheet()
     document:Show()
 
-    -- log(WIDGET_NAME .. ": Widget initialized successfully")
-
     return true
 end
 
 function widget:Shutdown()
-    -- log(WIDGET_NAME .. ": Shutting down widget...")
-
     -- Clean up data model
     if widget.rmlContext and dm_handle then
         widget.rmlContext:RemoveDataModel(MODEL_NAME)
@@ -327,7 +309,6 @@ function widget:Shutdown()
     end
 
     widget.rmlContext = nil
-    -- log(WIDGET_NAME .. ": Shutdown complete")
 end
 
 function widget:GameFrame(n)
@@ -338,7 +319,6 @@ end
 
 -- Widget functions callable from RML
 function widget:Reload()
-    -- log(WIDGET_NAME .. ": Reloading widget...")
     widget:Shutdown()
     widget:Initialize()
 end
@@ -349,10 +329,8 @@ function widget:ToggleDebugger()
 
         if dm_handle.debugMode then
             RmlUi.SetDebugContext("shared")
-            -- log(WIDGET_NAME .. ": RmlUi debugger enabled")
         else
             RmlUi.SetDebugContext(nil)
-            -- log(WIDGET_NAME .. ": RmlUi debugger disabled")
         end
     end
 end
