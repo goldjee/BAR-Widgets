@@ -338,7 +338,7 @@ end
 
 -- Returns true if the current game is a Raptors game
 function hr.isRaptors()
-    return Spring.Utilities.Gametype.IsRaptors()
+    return BAR.Utilities.Gametype.IsRaptors()
 end
 
 -- Returns the Raptors/Gaia team ID
