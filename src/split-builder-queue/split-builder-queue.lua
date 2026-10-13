@@ -18,7 +18,7 @@ CTRL = take a share first, then the rest of the queue as backup
 CTRL+SHIFT = copy its full queue, starting at a random position
 ]],
         author = "uBdead (v1), Pyrem (v2), Insider (v3)",
-        date = "13.10.2026",
+        date = "14.10.2026",
         license = "GPL v3 or later",
         layer = 0,
         enabled = true,
@@ -34,6 +34,11 @@ local KEY_W = string.byte("w")
 
 local FRONTLINE_CHUNK_COUNT = 4
 local BUILDERS_PER_FRAME = 3 -- self-organize spreads its orders over frames to prevent lag
+-- ponytail: Recoil silently drops order packets over 8 KB (~350 build orders); 200 leaves headroom
+local ORDERS_PER_PACKET = 200
+
+-- First entry of every order list, so all orders after it can be shift-queued
+local STOP_ORDER = { CMD.STOP, {}, 0 }
 
 -- Mobile constructors and nano turrets
 local BUILDER_DEFS = {}
@@ -65,18 +70,22 @@ local function log(msg)
     Spring.Echo("Split Builder Queue: " .. msg)
 end
 
--- Gives a copy of cmd to unitID; queued after the previous order unless it's the first one
-local function giveCommand(unitID, cmd, queued)
-    if not queued then
-        Spring.GiveOrderToUnit(unitID, cmd.id, cmd.params, cmd.options or 0)
-        return
-    end
+-- Appends a shift-queued copy of cmd to an order list
+local function queueOrder(orders, cmd)
     local options = {}
     for k, v in pairs(cmd.options or {}) do
         options[k] = v
     end
     options.shift = true
-    Spring.GiveOrderToUnit(unitID, cmd.id, cmd.params, options)
+    table.insert(orders, { cmd.id, cmd.params, options })
+end
+
+-- Sends an order list as a few packets instead of one network message per order
+local function sendOrders(unitID, orders)
+    for i = 1, #orders, ORDERS_PER_PACKET do
+        local last = math.min(i + ORDERS_PER_PACKET - 1, #orders)
+        Spring.GiveOrderArrayToUnit(unitID, { unpack(orders, i, last) })
+    end
 end
 
 -- Range [startIdx, endIdx] of the index-th of `parts` even shares of `total` items;
@@ -89,15 +98,15 @@ local function shareRange(total, parts, index)
     return startIdx, math.min(endIdx, total)
 end
 
--- Gives commands[startIdx..endIdx], then optionally all the other commands as backup
-local function giveShare(unitID, commands, startIdx, endIdx, withBackup)
+-- Appends commands[startIdx..endIdx], then optionally all the other commands as backup
+local function addShare(orders, commands, startIdx, endIdx, withBackup)
     for i = startIdx, endIdx do
-        giveCommand(unitID, commands[i], i > startIdx)
+        queueOrder(orders, commands[i])
     end
     if withBackup then
         for i, cmd in ipairs(commands) do
             if i < startIdx or i > endIdx then
-                giveCommand(unitID, cmd, true)
+                queueOrder(orders, cmd)
             end
         end
     end
@@ -105,7 +114,7 @@ end
 
 local function queueReturnHome(data)
     local pos = data.position
-    Spring.GiveOrderToUnit(data.unitID, CMD.MOVE, { pos.x, pos.y, pos.z }, { shift = true })
+    table.insert(data.orders, { CMD.MOVE, { pos.x, pos.y, pos.z }, { shift = true } })
 end
 
 local function getGroupCenter(builderData)
@@ -145,7 +154,8 @@ local function collectSelfOrganizeData(builders)
             table.insert(builderData, {
                 unitID = unitID,
                 position = { x = x, y = y, z = z },
-                assignedCommands = 0,
+                orders = { STOP_ORDER },
+                assigned = {}, -- commands handed out in frontline waves
             })
 
             -- Non-build commands are skipped; a fresh return-home move is added later
@@ -171,9 +181,9 @@ end
 local function distributeBalanced(builderData, mergedCommands)
     for i, data in ipairs(builderData) do
         local startIdx, endIdx = shareRange(#mergedCommands, #builderData, i)
-        Spring.GiveOrderToUnit(data.unitID, CMD.STOP, {}, 0)
-        giveShare(data.unitID, mergedCommands, startIdx, endIdx, true)
+        addShare(data.orders, mergedCommands, startIdx, endIdx, true)
         queueReturnHome(data)
+        sendOrders(data.unitID, data.orders)
 
         if i % BUILDERS_PER_FRAME == 0 then
             coroutine.yield()
@@ -204,32 +214,32 @@ local function assignFrontlineChunk(builderData, chunkCommands)
         local data = entry.data
         local startIdx, endIdx = shareRange(#chunkCommands, #nearest, i)
         for j = startIdx, endIdx do
-            giveCommand(data.unitID, chunkCommands[j], data.assignedCommands > 0)
-            data.assignedCommands = data.assignedCommands + 1
+            queueOrder(data.orders, chunkCommands[j])
+            data.assigned[chunkCommands[j]] = true
         end
     end
 end
 
 -- Splits the queue nearest-first into waves handed to the nearest builders,
--- then gives everyone the full queue as backup
+-- then gives everyone the rest of the queue as backup
 local function distributeFrontline(builderData, mergedCommands)
-    for _, data in ipairs(builderData) do
-        Spring.GiveOrderToUnit(data.unitID, CMD.STOP, {}, 0)
-    end
     sortByDistance(mergedCommands, getGroupCenter(builderData))
 
     local chunkCount = math.min(FRONTLINE_CHUNK_COUNT, #mergedCommands)
     for chunk = 1, chunkCount do
         local startIdx, endIdx = shareRange(#mergedCommands, chunkCount, chunk)
         assignFrontlineChunk(builderData, { unpack(mergedCommands, startIdx, endIdx) })
-        coroutine.yield()
     end
 
     for i, data in ipairs(builderData) do
+        -- Queuing a build that's already queued cancels it, so skip the builder's own wave orders
         for _, cmd in ipairs(mergedCommands) do
-            giveCommand(data.unitID, cmd, true)
+            if not data.assigned[cmd] then
+                queueOrder(data.orders, cmd)
+            end
         end
         queueReturnHome(data)
+        sendOrders(data.unitID, data.orders)
         if i % BUILDERS_PER_FRAME == 0 then
             coroutine.yield()
         end
@@ -372,23 +382,24 @@ function widget:UnitCommand(unitID, unitDefID, _, cmdID, cmdParams)
     end
 
     currentUnitIndex = currentUnitIndex + 1
-    Spring.GiveOrderToUnit(unitID, CMD.STOP, {}, 0)
+    local orders = { STOP_ORDER }
 
     if ctrlHeld and shiftHeldOnPress and not altHeld then
         -- CTRL+SHIFT: full queue, rotated to start at a random position
         local startPos = math.random(1, #commands)
         for n = 0, #commands - 1 do
-            giveCommand(unitID, commands[(startPos - 1 + n) % #commands + 1], n > 0)
+            queueOrder(orders, commands[(startPos - 1 + n) % #commands + 1])
         end
     elseif altHeld and not ctrlHeld then
         -- ALT: full queue in order
-        giveShare(unitID, commands, 1, #commands, false)
+        addShare(orders, commands, 1, #commands, false)
     else
         -- CTRL+ALT: this builder's share only; CTRL: its share, then the rest as backup
         local startIdx, endIdx = shareRange(#commands, totalUnitsInBatch, currentUnitIndex + 1)
-        giveShare(unitID, commands, startIdx, endIdx, not altHeld)
+        addShare(orders, commands, startIdx, endIdx, not altHeld)
     end
 
+    sendOrders(unitID, orders)
     return true
 end
 
