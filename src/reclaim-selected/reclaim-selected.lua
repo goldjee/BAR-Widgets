@@ -157,6 +157,10 @@ end
 -- ========================================
 
 function widget:Initialize()
+    if Spring.GetSpectatingState() then
+        widgetHandler:RemoveWidget()
+        return
+    end
     widgetHandler.actionHandler:AddAction(self, "reclaim_selected", reclaimSelected, nil, "p")
     widgetHandler.actionHandler:AddAction(
         self,

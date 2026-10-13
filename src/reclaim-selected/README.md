@@ -1,6 +1,6 @@
 # Reclaim Selected
 
-A widget that adds a "Reclaim Selected" button to the order menu. Pressing it makes every nano turret in range reclaim the selected units. By default the turrets are shuffled and spread across the selected units, so large selections are reclaimed in parallel.
+A widget that adds a "Reclaim Selected" button to the order menu. Pressing it makes every nano turret in range reclaim the selected units. By default the turrets are shuffled and spread across the selected units, so large selections are reclaimed in parallel. It's disabled while spectating.
 
 Also available as actions for hotkey binding: `reclaim_selected` (every nearby turret reclaims each selected unit in turn) and `reclaim_selected_shuffle` (the same as the button).
 

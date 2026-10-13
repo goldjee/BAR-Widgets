@@ -1325,6 +1325,10 @@ end
 -- ========================================
 
 function widget:Initialize()
+    if Spring.GetSpectatingState() then
+        widgetHandler:RemoveWidget()
+        return
+    end
     localTeam = Spring.GetLocalTeamID()
     loadPreferences()
     priorityDefs = buildLookup(loadList("priority"))
@@ -1333,6 +1337,9 @@ function widget:Initialize()
 end
 
 function widget:Shutdown()
+    if not myUI then -- removed before setup (spectating), nothing to save
+        return
+    end
     savePreferences()
     notify("Closed")
 end

@@ -1,6 +1,6 @@
 # Build Orders
 
-A widget that takes control of constructors to make sure specific "priority" buildings get built exactly where you place them. If something on the "eraseable" list is in the way, nearby construction turrets reclaim it first.
+A widget that takes control of constructors to make sure specific "priority" buildings get built exactly where you place them. If something on the "eraseable" list is in the way, nearby construction turrets reclaim it first. It's disabled while spectating.
 
 ## How it works
 
