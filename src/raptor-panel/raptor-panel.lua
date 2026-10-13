@@ -9,84 +9,65 @@ function widget:GetInfo()
         name = "Raptor Panel",
         desc = "Shows raptor and player statistics in a compact interface",
         author = "Insider",
-        date = "16.10.2025",
+        date = "13.10.2026",
         layer = 0,
         enabled = true,
-        version = 4,
+        version = 5,
     }
 end
 
-local HarmonyRaptor = require("harmony-raptor")
-
-local modOptions = Spring.GetModOptions()
-
 -- Constants
+-- ========================================
+
 local WIDGET_NAME = "raptor-panel"
 local MODEL_NAME = "raptor-panel_model"
 local RML_PATH = "LuaUI/RmlWidgets/raptor-panel/raptor-panel.rml"
+local TABS = { economy = true, damage = true, queens = true }
 
--- Widget state
-local document
-local dm_handle
+-- Eco threat thresholds, as eco multiplier relative to the average player
+local THREAT_HIGH = 1.7
+local THREAT_MED = 1.2
 
--- Game data
-local raptorsTeamID
-local playerEcoAttractionsRaw = {}
-
--- Boss colors for health bars (used for queen health visualization)
-local bossColors = {
-    { 0.709, 0.537, 0.000 }, -- yellow
-    { 0.796, 0.294, 0.086 }, -- orange
-    { 0.862, 0.196, 0.184 }, -- red
-    { 0.827, 0.211, 0.509 }, -- magenta
-    { 0.423, 0.443, 0.768 }, -- violet
-    { 0.149, 0.545, 0.823 }, -- blue
-    { 0.164, 0.631, 0.596 }, -- cyan
-    { 0.521, 0.600, 0.000 }, -- green
+-- Queen health bar colors, cycled per queen
+local BOSS_COLORS = {
+    "#b58900", -- yellow
+    "#cb4b16", -- orange
+    "#dc322f", -- red
+    "#d33682", -- magenta
+    "#6c71c4", -- violet
+    "#268bd2", -- blue
+    "#2aa198", -- cyan
+    "#859900", -- green
 }
 
--- Helper to convert RGB to hex color string for RmlUI
-local function rgbToHex(r, g, b)
-    return string.format(
-        "#%02x%02x%02x",
-        math.floor(r * 255),
-        math.floor(g * 255),
-        math.floor(b * 255)
-    )
-end
+local modOptions = Spring.GetModOptions()
 
--- Complete data model structure (all fields must be defined at creation time)
-local init_model = {
+-- Data model (RmlUi needs every field defined at creation time)
+local initModel = {
     -- UI state
     isDev = false, -- enables development controls
-    debugMode = false,
     activeTab = "economy",
 
-    -- Length counters for RmlUI data bindings
-    playerEcoDataLength = 0,
-
-    -- Game info
-    difficulty = "unknown",
+    -- Status
+    difficulty = modOptions.raptor_difficulty or "unknown",
+    queenCount = tonumber(modOptions.raptor_queen_count) or 1,
     stage = "grace",
-    gracePeriodRemaining = 0,
-    graceTimeFormatted = "",
+    gracePeriodRemaining = "",
     queenHatchProgress = 0,
-    angerTech = 0,
     queenETA = "",
-    angerGainBase = 0,
-    angerGainEco = 0,
-    angerGainAggression = 0,
-    angerGainTotal = "0.00",
-    queenCount = 0,
+    angerGainTotal = "",
+    angerTech = 0,
     queenHealth = 0,
     queenCountKilled = 0,
     queenStaggerActive = false,
     queenStaggerPercentage = 0,
-    queenDamageMultiplier = "1",
+    queenDamageMultiplier = "",
 
+    -- Economy tab
     ecoData = {},
+    playerEcoDataLength = 0,
 
-    -- Boss data structure
+    -- Damage and queens tabs
     bossData = {
         playerDamages = {},
         playerDamagesLength = 0,
@@ -97,140 +78,291 @@ local init_model = {
     },
 }
 
--- Utility Functions
+-- Widget state
+-- ========================================
+
+local rmlContext
+local document
+local dataModel
+local debuggerOn = false
+local playerEcoValues = {} -- {teamID = eco attraction}, player teams only
+local playerNames = {} -- {teamID = name} cache
+
+-- Helpers
+-- ========================================
+
 local function log(msg)
     Spring.Echo(WIDGET_NAME .. ": " .. msg)
 end
 
 local function formatNumber(num)
-    -- Nil-safe: return "0" if num is nil or not a number
-    if not num or type(num) ~= "number" then
+    if type(num) ~= "number" then
         return "0"
     end
-
     if num >= 1000000 then
         return string.format("%.1fM", num / 1000000)
     elseif num >= 1000 then
         return string.format("%.1fK", num / 1000)
-    else
-        return tostring(math.floor(num))
     end
+    return tostring(math.floor(num))
 end
 
 local function formatTime(seconds)
-    -- Nil-safe: return "0 seconds" if seconds is nil or not a number
-    if not seconds or type(seconds) ~= "number" or seconds <= 0 then
-        return "0 s"
+    if type(seconds) ~= "number" or seconds <= 0 then
+        return "0s"
     end
-
     local minutes = math.floor(seconds / 60)
     local secs = math.floor(seconds % 60)
-
     if minutes > 0 then
         return minutes .. "m " .. secs .. "s"
     end
     return secs .. "s"
 end
 
-local function updateGameInfo()
-    if not dm_handle then
-        return
+-- Formats a 0-1 fraction as a whole percent number, e.g. 0.256 -> "26"
+local function formatPercent(fraction)
+    return string.format("%.0f", fraction * 100)
+end
+
+-- Sorts list in place by list[i][key], descending unless ascending is true
+local function sortBy(list, key, ascending)
+    table.sort(list, function(a, b)
+        if ascending then
+            return a[key] < b[key]
+        end
+        return a[key] > b[key]
+    end)
+end
+
+local function getRule(key)
+    return Spring.GetGameRulesParam(key) or 0
+end
+
+-- Returns the player names of a team joined with " & ", or the AI name
+local function getPlayerName(teamID)
+    if playerNames[teamID] then
+        return playerNames[teamID]
     end
 
-    HarmonyRaptor.updateGameInfo() -- Fetch fresh data from engine
-    local info = HarmonyRaptor.getGameInfo()
-    if not info then
-        -- Keep existing values, don't crash
-        return
+    local names = {}
+    for _, playerID in ipairs(Spring.GetPlayerList(teamID) or {}) do
+        local name = Spring.GetPlayerInfo(playerID)
+        if name then
+            table.insert(names, name)
+        end
     end
 
-    -- Copy fields with fallbacks to prevent nil crashes
-    dm_handle.difficulty = modOptions.raptor_difficulty
-    dm_handle.stage = info.stage
-    dm_handle.gracePeriodRemaining = formatTime(info.gracePeriodRemaining)
-    dm_handle.queenHatchProgress = info.queenHatchProgress
-    dm_handle.angerTech = info.angerTech
-    dm_handle.angerGainBase = info.angerGainBase
-    dm_handle.angerGainEco = info.angerGainEco
-    dm_handle.angerGainAggression = info.angerGainAggression
-    dm_handle.angerGainTotal =
-        string.format("%.2f", info.angerGainBase + info.angerGainEco + info.angerGainAggression)
-    dm_handle.queenHealth = info.queenHealth
-    dm_handle.queenCount = info.queenCount
-    dm_handle.queenCountKilled = info.queenCountKilled
-    dm_handle.queenStaggerActive = info.queenStaggerActive or false
-    dm_handle.queenStaggerPercentage = info.queenStaggerPercentage or 0
-    dm_handle.queenDamageMultiplier =
-        string.format("%.2g", HarmonyRaptor.getQueenDamageMultiplier())
+    local name = #names > 0 and table.concat(names, " & ")
+        or select(2, Spring.GetAIInfo(teamID))
+        or ""
+    if name ~= "" then
+        playerNames[teamID] = name
+    end
+    return name
+end
 
-    -- nil ETA in main stage means zero anger gain (infinite time)
-    local queenETA = HarmonyRaptor.getQueenETA()
-    dm_handle.queenETA = queenETA and formatTime(queenETA) or "∞"
+-- Status
+-- ========================================
 
-    -- Calculate economy data (threat math lives in HarmonyRaptor)
-    local myTeamId = Spring.GetMyTeamID()
-    local playerEcoData = HarmonyRaptor.getPlayerEcoThreat(playerEcoAttractionsRaw)
+-- Multiplier applied to player damage against queens, based on total queen
+-- health. Mirrors the base game's raptor_spawner_defense.lua ("bosses get
+-- stronger the less health they have")
+local function getQueenDamageMultiplier(queenHealth)
+    if queenHealth > 50 then
+        return 2
+    elseif queenHealth > 25 then
+        return 1
+    elseif queenHealth > 10 then
+        return 0.75
+    elseif queenHealth > 5 then
+        return 0.5
+    end
+    return 0.25
+end
 
-    -- Layer presentation onto the computed threat data
-    for _, data in ipairs(playerEcoData) do
-        data.isMe = (myTeamId == data.teamID)
-        data.multiplierFormatted = string.format("%.1f", data.multiplier)
-        data.percentageFormatted = string.format("%.0f", data.percentage)
+-- Updates the status fields; returns the queen damage multiplier and stagger
+-- state, which the resistance math in updateBoss() needs
+local function updateStatus()
+    local graceRemaining = getRule("raptorGracePeriod") - Spring.GetGameSeconds()
+    local anger = getRule("raptorQueenAnger")
+    local angerGain = getRule("RaptorQueenAngerGain_Base")
+        + getRule("RaptorQueenAngerGain_Aggression")
+        + getRule("RaptorQueenAngerGain_Eco")
+    local queenHealth = getRule("raptorQueenHealth")
+    local stage = (graceRemaining >= 0 and "grace") or (anger < 100 and "main") or "boss"
+    local damageMultiplier = stage == "boss" and getQueenDamageMultiplier(queenHealth) or 1
+
+    -- Queen stagger (base game PR #7825): depleting the stagger bar paralyzes
+    -- queens and halves their resistances for the stagger duration
+    local staggerRule = Spring.GetGameRulesParam("raptorQueenStaggerActive")
+    local staggerActive = staggerRule == true or staggerRule == 1
+
+    dataModel.stage = stage
+    dataModel.gracePeriodRemaining = formatTime(graceRemaining)
+    dataModel.queenHatchProgress = math.min(100, math.floor(anger + 0.5))
+    -- zero anger gain means the queens never hatch
+    dataModel.queenETA = angerGain > 0 and formatTime((100 - anger) / angerGain) or "∞"
+    dataModel.angerGainTotal = string.format("%.2f", angerGain)
+    dataModel.angerTech = getRule("raptorTechAnger")
+    dataModel.queenHealth = queenHealth
+    dataModel.queenCountKilled = getRule("raptorQueensKilled")
+    dataModel.queenStaggerActive = staggerActive
+    dataModel.queenStaggerPercentage = getRule("raptorQueenStaggerPercentage")
+    dataModel.queenDamageMultiplier = string.format("%.2g", damageMultiplier)
+
+    return damageMultiplier, staggerActive
+end
+
+-- Economy
+-- ========================================
+
+-- Raptor targeting attraction of a unit def; mobile units (except
+-- commanders) and objects attract nothing
+local function getEcoValue(unitDef)
+    local cp = unitDef.customParams
+    if (unitDef.canMove and not cp.iscommander) or unitDef.modCategories.object or cp.objectify then
+        return 0
     end
 
-    -- Update data model
-    dm_handle.ecoData = playerEcoData
-    dm_handle.playerEcoDataLength = #playerEcoData
+    local value = 1
+        + (unitDef.energyMake or 0)
+        + (unitDef.windGenerator or 0) * 0.75
+        + (unitDef.tidalGenerator or 0) * 15
+    if (unitDef.energyUpkeep or 0) < 0 then
+        value = value - unitDef.energyUpkeep
+    end
+    if (unitDef.extractsMetal or 0) > 0 then
+        value = value + 200
+    end
+    if cp.energyconv_capacity then
+        value = value + tonumber(cp.energyconv_capacity) / 2
+    end
+    if cp.decoyfor == "armfus" then
+        value = value + 1000
+    end
+    local techLevel = tonumber(cp.techlevel) or 1
+    if techLevel > 1 then
+        value = value * techLevel * 2
+    end
+    if cp.unitgroup == "antinuke" or cp.unitgroup == "nuke" then
+        value = 1000
+    end
+    return value
+end
 
-    -- Calculate boss data
-    local bossInfo = HarmonyRaptor.getBossInfo()
+local ecoValueByDefID = {}
+for unitDefID, unitDef in pairs(UnitDefs) do
+    ecoValueByDefID[unitDefID] = getEcoValue(unitDef)
+end
 
-    -- Always initialize empty arrays (even when no boss data exists yet)
-    local playerDamages = {}
-    local healths = {}
+-- Adds sign * the unit's eco value to its team; untracked teams are ignored
+local function addEcoValue(unitDefID, unitTeam, sign)
+    if playerEcoValues[unitTeam] then
+        playerEcoValues[unitTeam] = playerEcoValues[unitTeam] + sign * ecoValueByDefID[unitDefID]
+    end
+end
+
+local function updateEco()
+    local myTeamID = Spring.GetMyTeamID()
+    local rows = {}
+    local sum = 0
+
+    for teamID, value in pairs(playerEcoValues) do
+        local name = getPlayerName(teamID)
+        if name ~= "" then
+            value = math.max(0, value)
+            sum = sum + value
+            table.insert(rows, { name = name, value = value, isMe = teamID == myTeamID })
+        end
+    end
+
+    for _, row in ipairs(rows) do
+        local share = sum > 0 and row.value / sum or 0
+        local multiplier = share * #rows
+        row.percentage = share * 100
+        row.percentageFormatted = formatPercent(share)
+        row.multiplierFormatted = string.format("%.1f", multiplier)
+        if multiplier > THREAT_HIGH then
+            row.threatLevel = "high"
+        elseif multiplier > THREAT_MED then
+            row.threatLevel = "medium"
+        else
+            row.threatLevel = "low"
+        end
+    end
+    sortBy(rows, "value")
+
+    dataModel.ecoData = rows
+    dataModel.playerEcoDataLength = #rows
+end
+
+-- Bosses
+-- ========================================
+
+local function updateBoss(damageMultiplier, staggerActive)
+    local bossInfo = {}
+    local raw = Spring.GetGameRulesParam("pveBossInfo")
+    if raw then
+        local ok, decoded = pcall(Json.decode, raw)
+        if ok and decoded then
+            bossInfo = decoded
+        else
+            log("failed to decode boss info JSON")
+        end
+    end
+
+    -- The game applies the health-phase multiplier BEFORE resistance:
+    -- applied = raw * phaseMult * (1 - resist [* 0.5 while staggered]),
+    -- so effective resistance differs from the raw percent (e.g. 95% resist
+    -- at the x0.25 phase means 98.75% of raw damage is mitigated)
+    local staggerFactor = staggerActive and 0.5 or 1
     local resistances = {}
-
-    -- Only populate arrays if boss data is available
-    if bossInfo then
-        -- Process player damages with formatted values (relative is computed in HarmonyRaptor)
-        for _, dmg in ipairs(bossInfo.playerDamages) do
-            table.insert(playerDamages, {
-                name = dmg.name,
-                damage = dmg.damage,
-                damageFormatted = formatNumber(dmg.damage),
-                relative = string.format("%.1f", dmg.relative),
-            })
-        end
-
-        -- Process queen health percentages with colors
-        for i, health in ipairs(bossInfo.healths) do
-            local color = bossColors[((i - 1) % #bossColors) + 1]
-            table.insert(healths, {
-                id = health.id,
-                health = health.health,
-                maxHealth = health.maxHealth,
-                percentage = string.format("%.0f", health.percentage),
-                colorHex = rgbToHex(color[1], color[2], color[3]),
-            })
-        end
-
-        -- Process resistances with formatted values
-        for _, res in ipairs(bossInfo.resistances) do
+    for defID, resistance in pairs(bossInfo.resistances or {}) do
+        local def = UnitDefs[tonumber(defID)]
+        if def and resistance.percent >= 0.1 then
+            local effective = 1 - (1 - resistance.percent * staggerFactor) * damageMultiplier
             table.insert(resistances, {
-                name = res.name,
-                percent = res.percent,
-                percentFormatted = string.format("%.0f", res.percent * 100),
+                name = def.translatedHumanName,
+                damage = resistance.damage,
+                damageFormatted = formatNumber(resistance.damage),
+                percentFormatted = formatPercent(resistance.percent),
                 -- negative = queens currently take extra damage from this weapon
-                effectiveFormatted = string.format("%.0f", res.effectivePercent * 100),
-                damage = res.damage,
-                damageFormatted = formatNumber(res.damage),
+                effectiveFormatted = formatPercent(effective),
             })
         end
     end
+    sortBy(resistances, "damage")
 
-    -- Update entire bossData object to trigger RmlUI reactivity
-    -- (updating nested properties individually doesn't notify RmlUI of changes)
-    dm_handle.bossData = {
+    local damages = bossInfo.playerDamages or {}
+    local totalDamage = 0
+    for _, damage in pairs(damages) do
+        totalDamage = totalDamage + damage
+    end
+    local playerDamages = {}
+    for teamID, damage in pairs(damages) do
+        table.insert(playerDamages, {
+            name = getPlayerName(tonumber(teamID)),
+            damage = damage,
+            damageFormatted = formatNumber(damage),
+            relative = string.format("%.1f", damage / math.max(totalDamage, 1)),
+        })
+    end
+    sortBy(playerDamages, "damage")
+
+    local healths = {}
+    for _, status in pairs(bossInfo.statuses or {}) do
+        if not status.isDead and status.health > 0 then
+            table.insert(healths, { fraction = status.health / status.maxHealth })
+        end
+    end
+    sortBy(healths, "fraction", true)
+    for i, health in ipairs(healths) do
+        health.percentage = formatPercent(health.fraction)
+        health.colorHex = BOSS_COLORS[(i - 1) % #BOSS_COLORS + 1]
+    end
+
+    -- Replace the whole object: RmlUi isn't notified of nested field changes
+    dataModel.bossData = {
         playerDamages = playerDamages,
         playerDamagesLength = #playerDamages,
         healths = healths,
@@ -240,130 +372,107 @@ local function updateGameInfo()
     }
 end
 
+local function update()
+    local damageMultiplier, staggerActive = updateStatus()
+    updateEco()
+    updateBoss(damageMultiplier, staggerActive)
+end
+
+-- Widget callins
+-- ========================================
+
+local function fail(msg)
+    log("ERROR - " .. msg)
+    widgetHandler:RemoveWidget()
+end
+
 function widget:Initialize()
-    if not HarmonyRaptor.isRaptors() then
+    if not BAR.Utilities.Gametype.IsRaptors() then
         widgetHandler:RemoveWidget()
         return
     end
 
-    -- Get the shared RML context
-    widget.rmlContext = RmlUi.GetContext("shared")
-    if not widget.rmlContext then
-        log("ERROR - Failed to get RML context")
-        return false
+    rmlContext = RmlUi.GetContext("shared")
+    if not rmlContext then
+        return fail("failed to get RML context")
     end
 
-    -- Create and bind the data model
-    dm_handle = widget.rmlContext:OpenDataModel(MODEL_NAME, init_model)
-    if not dm_handle then
-        log("ERROR - Failed to create data model")
-        return false
+    dataModel = rmlContext:OpenDataModel(MODEL_NAME, initModel, widget)
+    if not dataModel then
+        return fail("failed to create data model")
     end
 
-    -- Initialize team data
-    raptorsTeamID = HarmonyRaptor.getRaptorsTeamID()
-    local playerTeams = HarmonyRaptor.getPlayerTeams()
-
-    for i = 1, #playerTeams do
-        playerEcoAttractionsRaw[playerTeams[i]] = 0
-    end
-
-    -- Initialize eco value cache
-    HarmonyRaptor.initEcoValueCache()
-
-    -- Register existing units
-    local allUnits = Spring.GetAllUnits()
-    for i = 1, #allUnits do
-        local unitID = allUnits[i]
-        local unitDefID = Spring.GetUnitDefID(unitID)
-        local unitTeamID = Spring.GetUnitTeam(unitID)
-        if unitTeamID ~= raptorsTeamID then
-            HarmonyRaptor.updatePlayerEcoValues(
-                playerEcoAttractionsRaw,
-                unitDefID,
-                unitTeamID,
-                true
-            )
+    -- Track player teams only (no Gaia, Raptors or Scavengers)
+    playerEcoValues = {}
+    local gaiaTeamID = Spring.GetGaiaTeamID()
+    for _, teamID in ipairs(Spring.GetTeamList()) do
+        local luaAI = Spring.GetTeamLuaAI(teamID) or ""
+        if teamID ~= gaiaTeamID and not luaAI:find("Raptors") and not luaAI:find("Scavengers") then
+            playerEcoValues[teamID] = 0
         end
     end
-
-    -- Populate data
-    updateGameInfo()
-
-    -- Load the RML document
-    document = widget.rmlContext:LoadDocument(RML_PATH, widget)
-    if not document then
-        log("ERROR - Failed to load document: " .. RML_PATH)
-        widget:Shutdown()
-        return false
+    for _, unitID in ipairs(Spring.GetAllUnits()) do
+        addEcoValue(Spring.GetUnitDefID(unitID), Spring.GetUnitTeam(unitID), 1)
     end
 
-    -- Apply styles and show the document
+    update()
+
+    -- the widget arg exposes `widget` to the RML event handlers; the engine types omit it
+    ---@diagnostic disable-next-line: redundant-parameter
+    document = rmlContext:LoadDocument(RML_PATH, widget)
+    if not document then
+        return fail("failed to load document: " .. RML_PATH)
+    end
     document:ReloadStyleSheet()
     document:Show()
-
-    return true
 end
 
 function widget:Shutdown()
-    -- Clean up data model
-    if widget.rmlContext and dm_handle then
-        widget.rmlContext:RemoveDataModel(MODEL_NAME)
-        dm_handle = nil
+    if dataModel then
+        rmlContext:RemoveDataModel(MODEL_NAME)
+        dataModel = nil
     end
-
-    -- Close document
     if document then
         document:Close()
         document = nil
     end
-
-    widget.rmlContext = nil
+    rmlContext = nil
 end
 
 function widget:GameFrame(n)
     if n % 30 == 0 then
-        updateGameInfo()
+        update()
     end
 end
 
--- Widget functions callable from RML
+function widget:UnitCreated(_, unitDefID, unitTeam)
+    addEcoValue(unitDefID, unitTeam, 1)
+end
+
+function widget:UnitGiven(_, unitDefID, unitTeam, oldTeam)
+    addEcoValue(unitDefID, unitTeam, 1)
+    addEcoValue(unitDefID, oldTeam, -1)
+end
+
+function widget:UnitDestroyed(_, unitDefID, unitTeam)
+    addEcoValue(unitDefID, unitTeam, -1)
+end
+
+-- Called from RML
+-- ========================================
+
 function widget:Reload()
     widget:Shutdown()
     widget:Initialize()
 end
 
 function widget:ToggleDebugger()
-    if dm_handle then
-        dm_handle.debugMode = not dm_handle.debugMode
-
-        if dm_handle.debugMode then
-            RmlUi.SetDebugContext("shared")
-        else
-            RmlUi.SetDebugContext(nil)
-        end
-    end
+    debuggerOn = not debuggerOn
+    RmlUi.SetDebugContext(debuggerOn and "shared" or nil)
 end
 
 function widget:SetTab(tabName)
-    if not (tabName == "economy" or tabName == "damage" or tabName == "queens") then
-        return
+    if TABS[tabName] then
+        dataModel.activeTab = tabName
     end
-
-    if dm_handle then
-        dm_handle.activeTab = tabName
-    end
-end
-
-function widget:UnitCreated(unitID, unitDefID, unitTeamID)
-    HarmonyRaptor.updatePlayerEcoValues(playerEcoAttractionsRaw, unitDefID, unitTeamID, true)
-end
-
-function widget:UnitGiven(unitID, unitDefID, unitTeam, oldTeam)
-    HarmonyRaptor.updatePlayerEcoValues(playerEcoAttractionsRaw, unitDefID, unitTeam, true)
-    HarmonyRaptor.updatePlayerEcoValues(playerEcoAttractionsRaw, unitDefID, oldTeam, false)
-end
-
-function widget:UnitDestroyed(unitID, unitDefID, unitTeam)
-    HarmonyRaptor.updatePlayerEcoValues(playerEcoAttractionsRaw, unitDefID, unitTeam, false)
 end

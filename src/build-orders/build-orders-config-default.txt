@@ -1,0 +1,4 @@
+DEBUG_MODE = false
+ALWAYS_DRAW_RENDER_PATH = true
+REPEAT = true
+NOTIFICATIONS = true

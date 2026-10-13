@@ -1,0 +1,5 @@
+allowTranslationByKeys = true
+snapBuilding = true
+drawChunkGrid = false
+differTypesByColor = false
+showUsageTips = false

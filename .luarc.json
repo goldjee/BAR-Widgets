@@ -3,7 +3,8 @@
     "runtime.version": "Lua 5.1",
     "completion.requireSeparator": "/",
     "runtime.path": ["?", "?.lua"],
-    "workspace.library": ["recoil-lua-library"],
+    "workspace.library": ["recoil-lua-library", "types"],
+    "diagnostics.globals": ["widgetHandler", "BAR", "Json", "UnitDefs", "UnitDefNames"],
     "runtime.special": {
         "VFS.Include": "require",
         "include": "require",
