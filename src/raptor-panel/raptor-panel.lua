@@ -220,11 +220,7 @@ end
 -- commanders) and objects attract nothing
 local function getEcoValue(unitDef)
     local cp = unitDef.customParams
-    if
-        (unitDef.canMove and not cp.iscommander)
-        or unitDef.modCategories.object
-        or cp.objectify
-    then
+    if (unitDef.canMove and not cp.iscommander) or unitDef.modCategories.object or cp.objectify then
         return 0
     end
 
@@ -449,16 +445,16 @@ function widget:GameFrame(n)
     end
 end
 
-function widget:UnitCreated(unitID, unitDefID, unitTeam)
+function widget:UnitCreated(_, unitDefID, unitTeam)
     addEcoValue(unitDefID, unitTeam, 1)
 end
 
-function widget:UnitGiven(unitID, unitDefID, unitTeam, oldTeam)
+function widget:UnitGiven(_, unitDefID, unitTeam, oldTeam)
     addEcoValue(unitDefID, unitTeam, 1)
     addEcoValue(unitDefID, oldTeam, -1)
 end
 
-function widget:UnitDestroyed(unitID, unitDefID, unitTeam)
+function widget:UnitDestroyed(_, unitDefID, unitTeam)
     addEcoValue(unitDefID, unitTeam, -1)
 end
 

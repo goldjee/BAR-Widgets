@@ -12,21 +12,14 @@ function widget:GetInfo()
     }
 end
 
---[[
-Border values
-NONE = 0
-TOP = 1
-RIGHT = 2
-BOTTOM = 4
-LEFT = 8
-Diagonal \ = 16
-Diagonal / = 32
+-- Constants
+-- ========================================
 
-For multiple borders in same cell, add the value together
-TOP and RIGHT border = 1 + 2 = 3
-]]--
+-- Border bits per cell; add them up for several borders in one cell
+local TOP, RIGHT, BOTTOM, LEFT, DIAG_DOWN, DIAG_UP = 1, 2, 4, 8, 16, 32
 
-local mapping = {
+-- stylua: ignore
+local MAPPING = {
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 2, 8, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 2, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 2, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 2, 8, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 2, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 2, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 2, 8, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 2, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 2, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
@@ -93,112 +86,112 @@ local mapping = {
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 2, 8, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 2, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 2, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 }
 
-local gridsize = 12 -- 3 is nano, wind etc size. 12 is efus size. This define the cell size for the mapping
-local gridsquare = 16  -- The smallest build grid to map size is 16x16
+local GRID_SIZE = 12 -- cells per mapping square: 12 is EFUS size (3 would be nano, wind etc.)
+local GRID_SQUARE = 16 -- the smallest build grid on the map is 16x16
+local CELL_SIZE = GRID_SIZE * GRID_SQUARE
+local MAX_SEGMENT_LENGTH = 24 * GRID_SQUARE
+local LINES_PER_BATCH = 10 -- the engine drops map marks sent too fast
+local BATCH_INTERVAL = 0.1 -- seconds
+
+-- Cell edges per border bit, as {bit, x1, z1, x2, z2} in cell units
+local EDGES = {
+    { TOP, 0, 0, 1, 0 },
+    { RIGHT, 1, 0, 1, 1 },
+    { BOTTOM, 0, 1, 1, 1 },
+    { LEFT, 0, 0, 0, 1 },
+    { DIAG_DOWN, 0, 0, 1, 1 },
+    { DIAG_UP, 1, 0, 0, 1 },
+}
+
+-- State
+-- ========================================
+
+local lineQueue = {}
 local timer = 0
-local drawLineQueue = {} -- Workaround for spring draw spam protection
 
-local function drawLine(y, startX, startZ, endX, endZ)
-    local maxLength = 24 * gridsquare
+-- Helpers
+-- ========================================
 
-    local dx = endX - startX
-    local dz = endZ - startZ
-    local length = math.sqrt(dx * dx + dz * dz)
+local function log(msg)
+    Spring.Echo("Raptor Grid Draw: " .. msg)
+end
 
-    local lengthCount = math.ceil(length / maxLength)
+local function hasBit(value, bit)
+    return math.floor(value / bit) % 2 == 1
+end
 
-    for i = 0, lengthCount - 1 do
-        local t1 = i / lengthCount
-        local t2 = (i + 1) / lengthCount
-
-        local sx = startX + dx * t1
-        local sz = startZ + dz * t1
-        local ex = startX + dx * t2
-        local ez = startZ + dz * t2
-
-        table.insert(drawLineQueue, {startX = sx, startZ = sz, endX = ex, endZ = ez, y = y})
+-- Queues a line split into segments short enough for a map mark
+local function queueLine(x1, z1, x2, z2)
+    local dx, dz = x2 - x1, z2 - z1
+    local segments = math.ceil(math.sqrt(dx * dx + dz * dz) / MAX_SEGMENT_LENGTH)
+    for i = 0, segments - 1 do
+        local t1, t2 = i / segments, (i + 1) / segments
+        table.insert(lineQueue, { x1 + dx * t1, z1 + dz * t1, x1 + dx * t2, z1 + dz * t2 })
     end
 end
 
-local function hasBit(val, bit)
-    return math.floor(val / bit) % 2 == 1
+-- Returns an error message if the mapping doesn't cover the map exactly
+local function validateMapping()
+    local expectedRows = Game.mapSizeZ / CELL_SIZE
+    local expectedCols = Game.mapSizeX / CELL_SIZE
+    if #MAPPING ~= expectedRows then
+        return "mapping has " .. #MAPPING .. " rows, expected " .. expectedRows
+    end
+    for row, cells in ipairs(MAPPING) do
+        if #cells ~= expectedCols then
+            return "row " .. row .. " has " .. #cells .. " columns, expected " .. expectedCols
+        end
+    end
 end
+
+-- Widget callins
+-- ========================================
 
 function widget:Initialize()
-    if Spring.GetSpectatingState() then
-        widgetHandler:RemoveWidget() -- Don't draw when spectating
-        return
-    end
-
-    if not (BAR.Utilities.Gametype.IsRaptors() or BAR.Utilities.Gametype.IsScavengers()) then
-        widgetHandler:RemoveWidget() -- Don't draw when not pve
-        return
-    end
-
-    if not (Game.mapName == "Full Metal Plate 1.7") then
-        widgetHandler:RemoveWidget() -- Don't draw when not supported map
-        return
-    end
-
-    local cellsize = gridsize * gridsquare
-    local expectedRows = Game.mapSizeZ / cellsize
-    local expectedCols = Game.mapSizeX / cellsize
-    if #mapping ~= expectedRows then
-        Spring.Echo("Error: Mapping has " .. #mapping .. " rows, expected " .. expectedRows)
+    local isPvE = BAR.Utilities.Gametype.IsRaptors() or BAR.Utilities.Gametype.IsScavengers()
+    if Spring.GetSpectatingState() or not isPvE or Game.mapName ~= "Full Metal Plate 1.7" then
         widgetHandler:RemoveWidget()
         return
     end
 
-    for row = 1, #mapping do
-        if #mapping[row] ~= expectedCols then
-            Spring.Echo("Error: Row " .. row .. " has " .. #mapping[row] .. " columns, expected " .. expectedCols)
-            widgetHandler:RemoveWidget()
-            return
-        end
+    local err = validateMapping()
+    if err then
+        log("ERROR - " .. err)
+        widgetHandler:RemoveWidget()
+        return
     end
 
-    for row = 1, #mapping do
-        for col = 1, #mapping[row] do
-            local val = mapping[row][col]
-            local x = (col - 1) * cellsize
-            local z = (row - 1) * cellsize
-
-            if hasBit(val, 1) then
-                drawLine(0, x, z, x + cellsize, z) -- Top
-            end
-            if hasBit(val, 2) then
-                drawLine(0, x + cellsize, z, x + cellsize, z + cellsize) -- Right
-            end
-            if hasBit(val, 4) then
-                drawLine(0, x, z + cellsize, x + cellsize, z + cellsize) -- Bottom
-            end
-            if hasBit(val, 8) then
-                drawLine(0, x, z, x, z + cellsize) -- Left
-            end
-            if hasBit(val, 16) then
-                drawLine(0, x, z, x + cellsize, z + cellsize) -- Diagonal \
-            end
-            if hasBit(val, 32) then
-                drawLine(0, x + cellsize, z, x, z + cellsize) -- Diagonal /
+    for row, cells in ipairs(MAPPING) do
+        for col, value in ipairs(cells) do
+            local x, z = (col - 1) * CELL_SIZE, (row - 1) * CELL_SIZE
+            for _, edge in ipairs(EDGES) do
+                if hasBit(value, edge[1]) then
+                    queueLine(
+                        x + edge[2] * CELL_SIZE,
+                        z + edge[3] * CELL_SIZE,
+                        x + edge[4] * CELL_SIZE,
+                        z + edge[5] * CELL_SIZE
+                    )
+                end
             end
         end
     end
 end
 
+-- Draws the queued lines in batches, then removes itself: the marks stay on the map
 function widget:Update(dt)
-    if #drawLineQueue == 0 then
-        widgetHandler:RemoveWidget() -- All is done, stop the widget
+    timer = timer + dt
+    if timer < BATCH_INTERVAL then
         return
     end
-    timer = timer + dt
-    if timer > 0.1 then
-        for _ = 1, 10 do -- Draw 10 lines at a time, I think max is 12?
-            if #drawLineQueue == 0 then
-                break
-            end
-            local drawHorizontalData = table.remove(drawLineQueue, 1) -- Get and remove
-            Spring.MarkerAddLine(drawHorizontalData.startX, drawHorizontalData.y, drawHorizontalData.startZ, drawHorizontalData.endX, drawHorizontalData.y, drawHorizontalData.endZ)
+    timer = 0
+
+    for _ = 1, LINES_PER_BATCH do
+        local line = table.remove(lineQueue, 1)
+        if not line then
+            widgetHandler:RemoveWidget()
+            return
         end
-        timer = 0
+        Spring.MarkerAddLine(line[1], 0, line[2], line[3], 0, line[4])
     end
 end

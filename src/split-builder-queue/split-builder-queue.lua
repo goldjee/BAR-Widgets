@@ -18,7 +18,7 @@ CTRL = take a share first, then the rest of the queue as backup
 CTRL+SHIFT = copy its full queue, starting at a random position
 ]],
         author = "uBdead (v1), Pyrem (v2), Insider (v3)",
-        date = "Jan 2025",
+        date = "13.10.2026",
         license = "GPL v3 or later",
         layer = 0,
         enabled = true,
@@ -29,23 +29,17 @@ end
 -- Constants
 -- ========================================
 
-local CMD_GUARD = CMD.GUARD
-local CMD_STOP = CMD.STOP
-local CMD_MOVE = CMD.MOVE
-
--- SDL keycodes for letters are their lowercase ASCII codes
 local KEY_Q = string.byte("q")
 local KEY_W = string.byte("w")
 
-local SELF_ORGANIZE_PRESERVE_QUEUE_ORDER = true -- keep merged commands sequential (matches CTRL+Guard feel)
 local FRONTLINE_CHUNK_COUNT = 4
-local FRONTLINE_ADD_BACKUP = true
+local BUILDERS_PER_FRAME = 3 -- self-organize spreads its orders over frames to prevent lag
 
 -- Mobile constructors and nano turrets
-local builderDefs = {}
+local BUILDER_DEFS = {}
 for unitDefID, unitDef in pairs(UnitDefs) do
     if unitDef.isBuilder and not unitDef.isFactory then
-        builderDefs[unitDefID] = true
+        BUILDER_DEFS[unitDefID] = true
     end
 end
 
@@ -62,11 +56,14 @@ local processingBatch = false
 local currentUnitIndex = 0
 local totalUnitsInBatch = 0
 
--- Async self-organize task (spreads the work over frames to prevent lag)
-local selfOrganizeTask = nil
+local selfOrganizeTask = nil -- coroutine of the running self-organize
 
 -- Helpers
 -- ========================================
+
+local function log(msg)
+    Spring.Echo("Split Builder Queue: " .. msg)
+end
 
 -- Gives a copy of cmd to unitID; queued after the previous order unless it's the first one
 local function giveCommand(unitID, cmd, queued)
@@ -82,9 +79,33 @@ local function giveCommand(unitID, cmd, queued)
     Spring.GiveOrderToUnit(unitID, cmd.id, cmd.params, options)
 end
 
+-- Range [startIdx, endIdx] of the index-th of `parts` even shares of `total` items;
+-- earlier shares take the remainder. Empty (startIdx > endIdx) when parts > total.
+local function shareRange(total, parts, index)
+    local perPart = math.floor(total / parts)
+    local remainder = total % parts
+    local startIdx = (index - 1) * perPart + 1 + math.min(index - 1, remainder)
+    local endIdx = startIdx + perPart - 1 + (index <= remainder and 1 or 0)
+    return startIdx, math.min(endIdx, total)
+end
+
+-- Gives commands[startIdx..endIdx], then optionally all the other commands as backup
+local function giveShare(unitID, commands, startIdx, endIdx, withBackup)
+    for i = startIdx, endIdx do
+        giveCommand(unitID, commands[i], i > startIdx)
+    end
+    if withBackup then
+        for i, cmd in ipairs(commands) do
+            if i < startIdx or i > endIdx then
+                giveCommand(unitID, cmd, true)
+            end
+        end
+    end
+end
+
 local function queueReturnHome(data)
     local pos = data.position
-    Spring.GiveOrderToUnit(data.unitID, CMD_MOVE, { pos.x, pos.y, pos.z }, { shift = true })
+    Spring.GiveOrderToUnit(data.unitID, CMD.MOVE, { pos.x, pos.y, pos.z }, { shift = true })
 end
 
 local function getGroupCenter(builderData)
@@ -110,18 +131,12 @@ end
 -- Self-organize
 -- ========================================
 
-local function queueCommandForBuilder(data, cmd)
-    giveCommand(data.unitID, cmd, data.assignedCommands > 0)
-    data.assignedCommands = data.assignedCommands + 1
-end
-
 -- Merges the build commands of all builders, dropping duplicates at the same spot
 local function collectSelfOrganizeData(builders)
     local builderData = {}
     local seenCommands = {}
     local mergedCommands = {}
-    local totalCommands = 0
-    local duplicatesRemoved = 0
+    local buildCommands = 0
 
     for _, unitID in ipairs(builders) do
         local x, y, z = Spring.GetUnitPosition(unitID)
@@ -133,208 +148,152 @@ local function collectSelfOrganizeData(builders)
                 assignedCommands = 0,
             })
 
-            totalCommands = totalCommands + #commands
             -- Non-build commands are skipped; a fresh return-home move is added later
             for _, cmd in ipairs(commands) do
                 if cmd.id < 0 and cmd.params then
+                    buildCommands = buildCommands + 1
                     local cmdX = math.floor((cmd.params[1] or 0) / 8 + 0.5) * 8
                     local cmdZ = math.floor((cmd.params[3] or 0) / 8 + 0.5) * 8
                     local key = cmd.id .. "," .. cmdX .. "," .. cmdZ
-                    if seenCommands[key] then
-                        duplicatesRemoved = duplicatesRemoved + 1
-                    else
+                    if not seenCommands[key] then
                         seenCommands[key] = true
                         table.insert(mergedCommands, cmd)
                     end
                 end
             end
-        else
-            Spring.Echo("[Self-Organize] Warning: Could not get position for unit " .. unitID)
         end
     end
 
-    return builderData, mergedCommands, totalCommands, duplicatesRemoved
+    return builderData, mergedCommands, buildCommands
 end
 
-local function distributeBalancedSelfOrganize(builderData, mergedCommands)
-    local totalCommands = #mergedCommands
-    local builderCount = #builderData
-
-    if SELF_ORGANIZE_PRESERVE_QUEUE_ORDER then
-        Spring.Echo(string.format("[Self-Organize] Preserving original queue order for %d commands", totalCommands))
-    else
-        local centerX, centerZ = getGroupCenter(builderData)
-        sortByDistance(mergedCommands, centerX, centerZ)
-        Spring.Echo(string.format("[Self-Organize] Sorted %d commands by distance from group center (%.0f, %.0f)",
-            totalCommands, centerX, centerZ))
-    end
-
-    local commandsPerBuilder = math.floor(totalCommands / builderCount)
-    local remainder = totalCommands % builderCount
-
-    Spring.Echo(string.format("[Self-Organize] Distributing %d commands to %d builders (floor=%d, remainder=%d)",
-        totalCommands, builderCount, commandsPerBuilder, remainder))
-
+-- Each builder gets an even share of the merged queue in order, then the rest as backup
+local function distributeBalanced(builderData, mergedCommands)
     for i, data in ipairs(builderData) do
-        -- This builder's primary share: [startIdx, endIdx]; earlier builders take the remainder
-        local startIdx = (i - 1) * commandsPerBuilder + 1 + math.min(i - 1, remainder)
-        local endIdx = startIdx + commandsPerBuilder - 1 + (i <= remainder and 1 or 0)
-        endIdx = math.min(endIdx, totalCommands)
-
-        Spring.GiveOrderToUnit(data.unitID, CMD_STOP, {}, 0)
-
-        local primaryCount = 0
-        for j = startIdx, endIdx do
-            giveCommand(data.unitID, mergedCommands[j], primaryCount > 0)
-            primaryCount = primaryCount + 1
-        end
-
-        -- Everything else as backup
-        local backupCount = 0
-        for j, cmd in ipairs(mergedCommands) do
-            if j < startIdx or j > endIdx then
-                giveCommand(data.unitID, cmd, true)
-                backupCount = backupCount + 1
-            end
-        end
-
+        local startIdx, endIdx = shareRange(#mergedCommands, #builderData, i)
+        Spring.GiveOrderToUnit(data.unitID, CMD.STOP, {}, 0)
+        giveShare(data.unitID, mergedCommands, startIdx, endIdx, true)
         queueReturnHome(data)
-        Spring.Echo(string.format("  Builder %d: %d primary + %d backup commands", i, primaryCount, backupCount))
 
-        if i % 3 == 0 then
+        if i % BUILDERS_PER_FRAME == 0 then
             coroutine.yield()
         end
     end
-
-    Spring.Echo("[Self-Organize] Complete! Each builder has primary tasks + full backup coverage")
 end
 
 -- Hands a chunk of commands to the builders nearest to it, an even share each
-local function assignFrontlineChunk(builderData, chunkCommands, chunkIndex)
-    local chunkCenterX, chunkCenterZ = 0, 0
+local function assignFrontlineChunk(builderData, chunkCommands)
+    local centerX, centerZ = 0, 0
     for _, cmd in ipairs(chunkCommands) do
-        chunkCenterX = chunkCenterX + (cmd.params[1] or 0)
-        chunkCenterZ = chunkCenterZ + (cmd.params[3] or 0)
+        centerX = centerX + (cmd.params[1] or 0)
+        centerZ = centerZ + (cmd.params[3] or 0)
     end
-    chunkCenterX = chunkCenterX / #chunkCommands
-    chunkCenterZ = chunkCenterZ / #chunkCommands
+    centerX = centerX / #chunkCommands
+    centerZ = centerZ / #chunkCommands
 
-    local builderOrder = {}
+    local nearest = {}
     for _, data in ipairs(builderData) do
-        local distance = (chunkCenterX - data.position.x) ^ 2 + (chunkCenterZ - data.position.z) ^ 2
-        table.insert(builderOrder, { data = data, distance = distance })
+        local distance = (centerX - data.position.x) ^ 2 + (centerZ - data.position.z) ^ 2
+        table.insert(nearest, { data = data, distance = distance })
     end
-    table.sort(builderOrder, function(a, b)
+    table.sort(nearest, function(a, b)
         return a.distance < b.distance
     end)
 
-    local commandsPerBuilder = math.floor(#chunkCommands / #builderOrder)
-    local remainder = #chunkCommands % #builderOrder
-    local cursor = 1
-    for orderIdx, info in ipairs(builderOrder) do
-        local take = commandsPerBuilder + (orderIdx <= remainder and 1 or 0)
-        for _ = 1, take do
-            queueCommandForBuilder(info.data, chunkCommands[cursor])
-            cursor = cursor + 1
+    for i, entry in ipairs(nearest) do
+        local data = entry.data
+        local startIdx, endIdx = shareRange(#chunkCommands, #nearest, i)
+        for j = startIdx, endIdx do
+            giveCommand(data.unitID, chunkCommands[j], data.assignedCommands > 0)
+            data.assignedCommands = data.assignedCommands + 1
         end
     end
-
-    Spring.Echo(string.format("[Frontline] Chunk %d assigned (%d commands)", chunkIndex, #chunkCommands))
 end
 
-local function distributeFrontlineSelfOrganize(builderData, mergedCommands)
-    local totalCommands = #mergedCommands
-
+-- Splits the queue nearest-first into waves handed to the nearest builders,
+-- then gives everyone the full queue as backup
+local function distributeFrontline(builderData, mergedCommands)
     for _, data in ipairs(builderData) do
-        Spring.GiveOrderToUnit(data.unitID, CMD_STOP, {}, 0)
-        data.assignedCommands = 0
+        Spring.GiveOrderToUnit(data.unitID, CMD.STOP, {}, 0)
     end
     sortByDistance(mergedCommands, getGroupCenter(builderData))
 
-    local chunkCount = math.min(FRONTLINE_CHUNK_COUNT, totalCommands)
-    local baseChunk = math.floor(totalCommands / chunkCount)
-    local remainder = totalCommands % chunkCount
-
-    Spring.Echo(string.format("[Frontline] Prioritizing %d commands into %d chunks (floor=%d, remainder=%d)",
-        totalCommands, chunkCount, baseChunk, remainder))
-
-    local startIdx = 1
+    local chunkCount = math.min(FRONTLINE_CHUNK_COUNT, #mergedCommands)
     for chunk = 1, chunkCount do
-        local size = baseChunk + (chunk <= remainder and 1 or 0)
-        assignFrontlineChunk(builderData, { unpack(mergedCommands, startIdx, startIdx + size - 1) }, chunk)
+        local startIdx, endIdx = shareRange(#mergedCommands, chunkCount, chunk)
+        assignFrontlineChunk(builderData, { unpack(mergedCommands, startIdx, endIdx) })
         coroutine.yield()
-        startIdx = startIdx + size
-    end
-
-    if FRONTLINE_ADD_BACKUP then
-        for _, data in ipairs(builderData) do
-            for _, cmd in ipairs(mergedCommands) do
-                giveCommand(data.unitID, cmd, true)
-            end
-        end
-        Spring.Echo("[Frontline] Added backup coverage after prioritized chunks")
     end
 
     for i, data in ipairs(builderData) do
+        for _, cmd in ipairs(mergedCommands) do
+            giveCommand(data.unitID, cmd, true)
+        end
         queueReturnHome(data)
-        if i % 3 == 0 then
+        if i % BUILDERS_PER_FRAME == 0 then
             coroutine.yield()
         end
     end
-
-    Spring.Echo(string.format("[Frontline] Complete! %d commands distributed across %d builders using %d chunks",
-        totalCommands, #builderData, chunkCount))
 end
 
-local function startSelfOrganizeMode(mode)
-    local label = (mode == "frontline") and "Frontline" or "Self-Organize"
+-- Runs the self-organize task, if any, until its next yield
+local function resumeSelfOrganize()
+    local task = selfOrganizeTask
+    if not task then
+        return
+    end
+    local ok, err = pcall(task)
+    if not ok then
+        log("ERROR - " .. tostring(err))
+        selfOrganizeTask = nil
+    end
+end
 
+local function startSelfOrganize(mode)
     if selfOrganizeTask then
-        Spring.Echo(string.format("[%s] Already processing, please wait...", label))
+        log("already processing, please wait")
+        return
+    end
+
+    local builders = {}
+    for _, unitID in ipairs(Spring.GetSelectedUnits()) do
+        if BUILDER_DEFS[Spring.GetUnitDefID(unitID)] then
+            table.insert(builders, unitID)
+        end
+    end
+    if #builders < 2 then
+        log("select at least 2 builders")
         return
     end
 
     selfOrganizeTask = coroutine.wrap(function()
-        local builders = {}
-        for _, unitID in ipairs(Spring.GetSelectedUnits()) do
-            if builderDefs[Spring.GetUnitDefID(unitID)] then
-                table.insert(builders, unitID)
-            end
-        end
-
-        if #builders < 2 then
-            Spring.Echo(string.format("[%s] Need at least 2 builders selected", label))
-            selfOrganizeTask = nil
-            return
-        end
-
-        local builderData, mergedCommands, totalCommands, duplicatesRemoved = collectSelfOrganizeData(builders)
-
+        local builderData, mergedCommands, buildCommands = collectSelfOrganizeData(builders)
         coroutine.yield()
 
-        if duplicatesRemoved > 0 then
-            Spring.Echo(string.format("[%s] Removed %d duplicate commands (%d unique from %d total)",
-                label, duplicatesRemoved, #mergedCommands, totalCommands))
-        end
-
         if #builderData == 0 then
-            Spring.Echo(string.format("[%s] Error: No valid builders found (position check failed)", label))
+            log("no valid builders found")
         elseif #mergedCommands == 0 then
-            Spring.Echo(string.format("[%s] No commands found in selected builders", label))
-        elseif mode == "frontline" then
-            distributeFrontlineSelfOrganize(builderData, mergedCommands)
+            log("selected builders have no build commands")
         else
-            distributeBalancedSelfOrganize(builderData, mergedCommands)
+            if mode == "frontline" then
+                distributeFrontline(builderData, mergedCommands)
+            else
+                distributeBalanced(builderData, mergedCommands)
+            end
+            log(
+                string.format(
+                    "%s: %d commands (%d duplicates removed) split across %d builders",
+                    mode,
+                    #mergedCommands,
+                    buildCommands - #mergedCommands,
+                    #builderData
+                )
+            )
         end
 
         selfOrganizeTask = nil
     end)
-
-    local success, err = pcall(selfOrganizeTask)
-    if not success then
-        Spring.Echo(string.format("[%s] Error starting task: %s", label, tostring(err)))
-        selfOrganizeTask = nil
-    end
+    resumeSelfOrganize()
 end
 
 -- Widget callins
@@ -349,9 +308,9 @@ end
 function widget:KeyPress(key, mods)
     if mods.ctrl and mods.alt then
         if key == KEY_Q then
-            startSelfOrganizeMode("balanced")
+            startSelfOrganize("balanced")
         elseif key == KEY_W then
-            startSelfOrganizeMode("frontline")
+            startSelfOrganize("frontline")
         end
     end
     return false
@@ -375,19 +334,20 @@ end
 function widget:UnitCommand(unitID, unitDefID, _, cmdID, cmdParams)
     local ctrlHeld = ctrlHeldOnPress
     local altHeld = altHeldOnPress
-    if not (ctrlHeld or altHeld) or cmdID ~= CMD_GUARD or not builderDefs[unitDefID] then
+    if not (ctrlHeld or altHeld) or cmdID ~= CMD.GUARD or not BUILDER_DEFS[unitDefID] then
         return false
     end
 
-    local targetUnitID = cmdParams[1]
-    if not targetUnitID or not Spring.ValidUnitID(targetUnitID) then
-        return false
-    end
-    if not builderDefs[Spring.GetUnitDefID(targetUnitID)] then
+    local targetID = cmdParams[1]
+    if
+        not targetID
+        or not Spring.ValidUnitID(targetID)
+        or not BUILDER_DEFS[Spring.GetUnitDefID(targetID)]
+    then
         return false
     end
 
-    local commands = Spring.GetUnitCommands(targetUnitID, -1)
+    local commands = Spring.GetUnitCommands(targetID, -1)
     if not commands or #commands == 0 then
         return false
     end
@@ -397,82 +357,36 @@ function widget:UnitCommand(unitID, unitDefID, _, cmdID, cmdParams)
         processingBatch = true
         currentUnitIndex = 0
 
-        local selectedConstructorCount = 0
-        for _, selUnitID in ipairs(Spring.GetSelectedUnits()) do
-            if builderDefs[Spring.GetUnitDefID(selUnitID)] and selUnitID ~= targetUnitID then
-                selectedConstructorCount = selectedConstructorCount + 1
+        local selectedBuilders = 0
+        for _, selectedID in ipairs(Spring.GetSelectedUnits()) do
+            if BUILDER_DEFS[Spring.GetUnitDefID(selectedID)] and selectedID ~= targetID then
+                selectedBuilders = selectedBuilders + 1
             end
         end
-        if selectedConstructorCount == 0 then
+        if selectedBuilders == 0 then
             return false
         end
 
-        -- Total builders = target (already working) + selected builders
-        totalUnitsInBatch = 1 + selectedConstructorCount
-
-        Spring.Echo(string.format(
-            "[CopyQueue] Starting batch: %d commands, %d total builders (target + %d selected), CTRL=%s ALT=%s",
-            #commands, totalUnitsInBatch, selectedConstructorCount, tostring(ctrlHeld), tostring(altHeld)))
+        -- The target keeps working on its queue too, so it counts as builder #1
+        totalUnitsInBatch = 1 + selectedBuilders
     end
 
     currentUnitIndex = currentUnitIndex + 1
-    -- The target is builder #1, so this selected unit is builder #(currentUnitIndex + 1)
-    local builderNumber = currentUnitIndex + 1
-
-    Spring.Echo(string.format("[CopyQueue] Processing selected unit %d (builder #%d/%d total, unitID=%d)",
-        currentUnitIndex, builderNumber, totalUnitsInBatch, unitID))
-
-    Spring.GiveOrderToUnit(unitID, CMD_STOP, {}, 0)
+    Spring.GiveOrderToUnit(unitID, CMD.STOP, {}, 0)
 
     if ctrlHeld and shiftHeldOnPress and not altHeld then
         -- CTRL+SHIFT: full queue, rotated to start at a random position
         local startPos = math.random(1, #commands)
-        Spring.Echo(string.format("[CopyQueue] CTRL+SHIFT - Builder starts at random position %d (rotated queue)", startPos))
-
         for n = 0, #commands - 1 do
             giveCommand(unitID, commands[(startPos - 1 + n) % #commands + 1], n > 0)
         end
-        Spring.Echo(string.format("  Total commands: %d (full queue from position %d)", #commands, startPos))
     elseif altHeld and not ctrlHeld then
         -- ALT: full queue in order
-        Spring.Echo(string.format("[CopyQueue] Unit %d: Copying full queue (%d commands)", currentUnitIndex, #commands))
-
-        for i, cmd in ipairs(commands) do
-            giveCommand(unitID, cmd, i > 1)
-        end
+        giveShare(unitID, commands, 1, #commands, false)
     else
-        -- CTRL / CTRL+ALT: this builder's sequential share [startIdx, endIdx];
-        -- earlier builders take the remainder
-        local commandsPerUnit = math.floor(#commands / totalUnitsInBatch)
-        local remainder = #commands % totalUnitsInBatch
-        local startIdx = (builderNumber - 1) * commandsPerUnit + 1 + math.min(builderNumber - 1, remainder)
-        local endIdx = math.min(startIdx + commandsPerUnit - 1 + (builderNumber <= remainder and 1 or 0), #commands)
-
-        if altHeld then
-            Spring.Echo(string.format("[CopyQueue] CTRL+ALT - Builder #%d: Sequential portion [%d to %d] ONLY (%d commands)",
-                builderNumber, startIdx, endIdx, endIdx - startIdx + 1))
-        else
-            Spring.Echo(string.format(
-                "[CopyQueue] CTRL-ONLY (HYBRID) - Builder #%d: Sequential [%d to %d] THEN the rest [1 to %d]",
-                builderNumber, startIdx, endIdx, #commands))
-        end
-
-        for i = startIdx, endIdx do
-            giveCommand(unitID, commands[i], i > startIdx)
-        end
-
-        -- CTRL only: the commands this builder didn't get, as backup
-        if not altHeld then
-            local backupCount = 0
-            for i, cmd in ipairs(commands) do
-                if i < startIdx or i > endIdx then
-                    giveCommand(unitID, cmd, true)
-                    backupCount = backupCount + 1
-                end
-            end
-            Spring.Echo(string.format("  Total commands queued: %d (sequential) + %d (backup) = %d",
-                endIdx - startIdx + 1, backupCount, (endIdx - startIdx + 1) + backupCount))
-        end
+        -- CTRL+ALT: this builder's share only; CTRL: its share, then the rest as backup
+        local startIdx, endIdx = shareRange(#commands, totalUnitsInBatch, currentUnitIndex + 1)
+        giveShare(unitID, commands, startIdx, endIdx, not altHeld)
     end
 
     return true
@@ -481,8 +395,12 @@ end
 function widget:TextCommand(command)
     if command == "copyqueue" or command == "cq" then
         Spring.Echo("Split Builder Queue commands:")
-        Spring.Echo("  - CTRL+ALT+Q: Self-Organize (merge all selected builder queues, return home after)")
-        Spring.Echo("  - CTRL+ALT+W: Frontline chunking (4 waves, nearest-first, return home after)")
+        Spring.Echo(
+            "  - CTRL+ALT+Q: Self-Organize (merge all selected builder queues, return home after)"
+        )
+        Spring.Echo(
+            "  - CTRL+ALT+W: Frontline chunking (4 waves, nearest-first, return home after)"
+        )
         Spring.Echo("  - ALT+Guard: Copy in order (full queue)")
         Spring.Echo("  - CTRL+ALT+Guard: Divide sequentially (portion only)")
         Spring.Echo("  - CTRL+Guard: Hybrid (portion, then the rest as backup)")
@@ -494,11 +412,7 @@ end
 
 function widget:GameFrame(n)
     -- Resume the self-organize task every 2 frames to spread the work
-    if selfOrganizeTask and n % 2 == 0 then
-        local success, err = pcall(selfOrganizeTask)
-        if not success then
-            Spring.Echo("[Self-Organize] Error during processing: " .. tostring(err))
-            selfOrganizeTask = nil
-        end
+    if n % 2 == 0 then
+        resumeSelfOrganize()
     end
 end

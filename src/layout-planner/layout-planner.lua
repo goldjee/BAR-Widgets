@@ -13,71 +13,8 @@ function widget:GetInfo()
     }
 end
 
-------------------------------------------------------------------------------------------
-------------------------------USER PREFERENCES / DEFAULT VALUES---------------------------
-------------------------------------------------------------------------------------------
-local slots = 20 --AMOUNT OF [SAVE/LOAD] SLOTS YOU WANT THE WIDGET TO DISPLAY               [0, ~)
-local slotsPerRow = 5 --HOW MANY SLOTS WILL BE DISPLAYED PER ROW                            [1, ~)
-local allowTranslationByKeys = true --WHETHER LAYOUT CAN BE SHIFTED USING KEYBOARD KEYS     [true, false]
-local snapBuilding = true --SNAP BUILDING TO GRID                                           [true, false]
-local drawChunkGrid = true --DRAW A CHUNK ALIGNED GRID                                      [true, false]
-local differTypesByColor = false --WHETHER BUILDIND TYPE ARE RENDERED WITH DIFFERENT COLORS [true, false]
-local showUsageTips = true --TEXT USAGE HINTS
-local windowX
-local windowY
-------------------------------------------------------------------------------------------
-------------------------------------------------------------------------------------------
-------------------------------------------------------------------------------------------
-------------------------------------------------------------------------------------------
-------------------------------------------------------------------------------------------
-------------------------------------------------------------------------------------------
-------------------------------------------------------------------------------------------
-
 -- Constants
-local BU_SIZE = 16 -- 1 BU = 16 game units (BU stand for Building Unit, the smallest unit size i could find, which is Cameras)
-local HALF_BU = BU_SIZE / 2
-local SQUARE_SIZE = 3 * BU_SIZE -- 1 square = 3x3 BUs = 48 units
-local CHUNK_SIZE = 4 * SQUARE_SIZE -- 1 chunk = 4x4 squares = 12x12 BUs
-
--- Building types (in BUs)
--- Building types (in BUs)
-local buildingTypes = {
-    -- { name = "1x1", size = 1, tooltip = "e.g.: Camera (lol)", color = {0.75, 0.75, 0.75, 1.0} }, -- soft gray
-    {
-        name = "Small",
-        size = 2,
-        tooltip = "e.g.: Wall, Dragon's Maw/Claw/Fury",
-        color = { 0.60, 0.70, 0.85, 0.6 },
-    }, -- desaturated blue
-    {
-        name = "Square",
-        size = 3,
-        tooltip = "e.g.: T1 Con. Turret, T1 Wind, T1 Converter",
-        color = { 0.65, 0.78, 0.65, 0.6 },
-    }, -- pale green
-    {
-        name = "Big",
-        size = 4,
-        tooltip = "e.g.: T2 Con. Turret, T2 Converter, Basilica",
-        color = { 0.80, 0.72, 0.55, 0.6 },
-    }, -- muted gold
-    {
-        name = "Large",
-        size = 6,
-        tooltip = "e.g.: AFUS, T3 Con. Turret, T2 Wind, Olympus, Basilisk",
-        color = { 0.75, 0.60, 0.60, 0.6 },
-    }, -- dusty rose
-    {
-        name = "Chunk",
-        size = 12,
-        tooltip = "e.g.: EFUS",
-        color = { 0.70, 0.65, 0.85, 0.6 },
-    }, -- soft purple
-}
-
---------------------------------------------------------------------------------
--- UI Instance
-local myUI
+-- ========================================
 
 -- The default config ships with the widget; the user's override and saved layouts live in LuaUI/Config
 local DEFAULTS_DIR = "LuaUI/Widgets/layout-planner"
@@ -85,990 +22,1114 @@ local USER_DIR = "LuaUI/Config/layout-planner"
 local DEFAULT_CONFIG_PATH = DEFAULTS_DIR .. "/layout-planner-config-default.txt"
 local CONFIG_PATH = USER_DIR .. "/layout-planner-config.txt"
 
-local function layoutPath(slot)
-    return USER_DIR .. "/layout_" .. slot .. ".txt"
+-- Layouts are drawn in BUs (building units): 1 BU = 16 world units, the smallest
+-- building size (cameras). A chunk is 12x12 BUs, a multiple of most building sizes.
+local BU_SIZE = 16
+local HALF_BU = BU_SIZE / 2
+local CHUNK_SIZE = 12 * BU_SIZE
+
+-- Building sizes in BUs; every layout has a building group per size
+local LAYOUT_SIZES = { 1, 2, 3, 4, 6, 12 }
+local SIZE_DRAW_ORDER = { 12, 6, 4, 3, 2, 1 } -- big first, so small ones stay visible
+
+local BUILDING_TYPES = {
+    {
+        name = "Small",
+        size = 2,
+        tooltip = "e.g.: Wall, Dragon's Maw/Claw/Fury",
+        color = { 0.60, 0.70, 0.85, 0.6 }, -- desaturated blue
+    },
+    {
+        name = "Square",
+        size = 3,
+        tooltip = "e.g.: T1 Con. Turret, T1 Wind, T1 Converter",
+        color = { 0.65, 0.78, 0.65, 0.6 }, -- pale green
+    },
+    {
+        name = "Big",
+        size = 4,
+        tooltip = "e.g.: T2 Con. Turret, T2 Converter, Basilica",
+        color = { 0.80, 0.72, 0.55, 0.6 }, -- muted gold
+    },
+    {
+        name = "Large",
+        size = 6,
+        tooltip = "e.g.: AFUS, T3 Con. Turret, T2 Wind, Olympus, Basilisk",
+        color = { 0.75, 0.60, 0.60, 0.6 }, -- dusty rose
+    },
+    {
+        name = "Chunk",
+        size = 12,
+        tooltip = "e.g.: EFUS",
+        color = { 0.70, 0.65, 0.85, 0.6 }, -- soft purple
+    },
+}
+
+local SIZE_COLORS = {}
+for _, buildingType in ipairs(BUILDING_TYPES) do
+    SIZE_COLORS[buildingType.size] = buildingType.color
 end
 
--- Forward declarations (defined further down, used earlier)
-local GetCameraSnappedAngle, GetSnappedCameraDirection
+local KEY_UNDO = string.byte("z") -- with ctrl
+local KEY_REDO = string.byte("a") -- with ctrl
+local KEY_ROTATE = string.byte("r")
+local KEY_INVERT = string.byte("i")
+-- Shifts the layout, relative to the camera, as {dx, dz}
+local TRANSLATE_KEYS = {
+    [string.byte("w")] = { 0, 1 },
+    [string.byte("s")] = { 0, -1 },
+    [string.byte("a")] = { -1, 0 },
+    [string.byte("d")] = { 1, 0 },
+}
 
--- Control Variables
-local drawingToGame = false
+local DRAW_HEIGHT = 5 -- drawn above the ground
+local GRID_RADIUS_CHUNKS = 8 -- chunk grid around the mouse
 
---Command modifiers
-local altMode = false
-local ctrlMode = false
+-- Rendering as map marks: the engine drops marks sent too fast
+local MARK_HEIGHT = 100
+local LINES_PER_BATCH = 10
+local BATCH_INTERVAL = 0.1 -- seconds
 
-local currentLayout = {
-    buildings = {
-        [1] = {},
-        [2] = {},
-        [3] = {},
-        [4] = {},
-        [6] = {},
-        [12] = {},
-    },
-    lines = {},
-} --Stores the current working layout
+local LOADED_HINTS = {
+    "Press [R] to rotate",
+    "Press [I] to invert",
+    "Hold [ALT] while placing to merge with current layout.",
+}
+local DRAWING_HINTS = {
+    "Use [left mouse button] to place buildings. Hold [ALT] to place in area",
+    "Use [right mouse button] to place lines. Hold [ALT] to remove crossed lines",
+    "Use [left mouse button] + [CTRL] + [ALT] to draw traced lines instead of area. (The amount of traces is based on the building Size)",
+}
+
+-- Settings saved to the config file, in file order
+local PREF_KEYS = {
+    "slots",
+    "slotsPerRow",
+    "allowTranslationByKeys",
+    "snapBuilding",
+    "drawChunkGrid",
+    "differTypesByColor",
+    "showUsageTips",
+    "windowX",
+    "windowY",
+}
+
+-- State
+-- ========================================
+
+local prefs = {
+    slots = 20, -- save/load slots in the window
+    slotsPerRow = 5,
+    allowTranslationByKeys = true, -- WASD shift the layout
+    snapBuilding = true, -- snap buildings to a grid of their size
+    drawChunkGrid = true,
+    differTypesByColor = false, -- a color per building size
+    showUsageTips = true, -- usage hints on screen
+}
 
 local drawingMode = false
-local currentSizeIndex = 1 -- which index into the "buildingTypes" array is selected
-local loadedData = nil -- stores loaded layout
-local dragging = false
-local dragStart = nil
-local lineStart = nil
+local currentSizeIndex = 1 -- into BUILDING_TYPES
+
+-- Layouts: {buildings = {[size] = {{x, z}}}, lines = {{x1, z1, x2, z2}}}, in BUs
+local currentLayout
+---Loaded layout file waiting to be placed
+---@class LoadedLayout
+---@field width integer
+---@field height integer
+---@field minSize integer smallest building size in the layout
+---@field layout table
+---@type LoadedLayout?
+local loadedData = nil
 local layoutRotation = 0
 
---Render stuff
-local drawLineQueue = {}
-local timer = 0
-local renderingToGame = false
+local dragStart = nil -- {bx, bz, size} while placing buildings
+local lineStart = nil -- {bx, bz} while drawing a line
 
--- Convert between world space and BU grid coordinates
-local function WorldToBU(x, z)
+local commandHistory = {}
+local historyPointer = 0
+
+local markQueue = {} -- {x1, z1, x2, z2} world lines waiting to become map marks
+local markTimer = 0
+
+local myUI
+
+-- Helpers
+-- ========================================
+
+local function log(msg)
+    Spring.Echo("Layout Planner: " .. msg)
+end
+
+local function worldToBU(x, z)
     return math.floor(x / BU_SIZE), math.floor(z / BU_SIZE)
 end
 
-local function BUToWorld(bx, bz)
+local function buToWorld(bx, bz)
     return bx * BU_SIZE, bz * BU_SIZE
 end
 
-local function GetIntersectingLineIndices(layout, r)
-    local function orientation(px, pz, qx, qz, rx, rz)
-        local val = (qz - pz) * (rx - qx) - (qx - px) * (rz - qz)
-        if val == 0 then
-            return 0
-        elseif val > 0 then
-            return 1
-        else
-            return 2
+-- BU under the mouse (pos from TraceScreenRay)
+local function buildingAnchor(pos)
+    return worldToBU(pos[1], pos[3])
+end
+
+-- Nearest BU corner to the mouse, where lines start and end
+local function lineAnchor(pos)
+    return worldToBU(pos[1] + HALF_BU, pos[3] + HALF_BU)
+end
+
+local function snapToSize(bx, bz, size)
+    if prefs.snapBuilding then
+        return math.floor(bx / size) * size, math.floor(bz / size) * size
+    end
+    return bx, bz
+end
+
+-- Ground position under the screen point, or nil
+local function traceGround(mx, my)
+    local _, pos = Spring.TraceScreenRay(mx, my, true)
+    return pos
+end
+
+-- Layouts
+-- ========================================
+
+local function newLayout()
+    local layout = { buildings = {}, lines = {} }
+    for _, size in ipairs(LAYOUT_SIZES) do
+        layout.buildings[size] = {}
+    end
+    return layout
+end
+
+currentLayout = newLayout()
+
+local function copyLayout(source)
+    local copy = newLayout()
+    for size, group in pairs(source.buildings) do
+        for _, pos in ipairs(group) do
+            table.insert(copy.buildings[size], { pos[1], pos[2] })
         end
     end
+    for _, line in ipairs(source.lines) do
+        table.insert(copy.lines, { line[1], line[2], line[3], line[4] })
+    end
+    return copy
+end
 
-    local function onSegment(px, pz, qx, qz, rx, rz)
-        return math.min(px, rx) <= qx
-            and qx <= math.max(px, rx)
-            and math.min(pz, rz) <= qz
-            and qz <= math.max(pz, rz)
+-- Bounds of the building positions and line ends; with includeFootprint, of the
+-- whole buildings. Returns nothing for an empty layout.
+local function layoutBounds(layout, includeFootprint)
+    local minX, maxX, minZ, maxZ = math.huge, -math.huge, math.huge, -math.huge
+    for size, group in pairs(layout.buildings) do
+        local extent = includeFootprint and size - 1 or 0
+        for _, pos in ipairs(group) do
+            minX, maxX = math.min(minX, pos[1]), math.max(maxX, pos[1] + extent)
+            minZ, maxZ = math.min(minZ, pos[2]), math.max(maxZ, pos[2] + extent)
+        end
+    end
+    for _, line in ipairs(layout.lines) do
+        minX, maxX = math.min(minX, line[1], line[3]), math.max(maxX, line[1], line[3])
+        minZ, maxZ = math.min(minZ, line[2], line[4]), math.max(maxZ, line[2], line[4])
+    end
+    if minX ~= math.huge then
+        return minX, maxX, minZ, maxZ
+    end
+end
+
+local function translateLayout(layout, dx, dz)
+    for _, group in pairs(layout.buildings) do
+        for _, pos in ipairs(group) do
+            pos[1], pos[2] = pos[1] + dx, pos[2] + dz
+        end
+    end
+    for _, line in ipairs(layout.lines) do
+        line[1], line[2], line[3], line[4] = line[1] + dx, line[2] + dz, line[3] + dx, line[4] + dz
+    end
+end
+
+-- Orders the ends of a line, so equal lines compare equal
+local function normalizeLine(x1, z1, x2, z2)
+    if x2 < x1 or (x2 == x1 and z2 < z1) then
+        return x2, z2, x1, z1
+    end
+    return x1, z1, x2, z2
+end
+
+local function addLine(layout, x1, z1, x2, z2)
+    if x1 ~= x2 or z1 ~= z2 then
+        table.insert(layout.lines, { normalizeLine(x1, z1, x2, z2) })
+    end
+end
+
+local function removeLine(layout, x1, z1, x2, z2)
+    x1, z1, x2, z2 = normalizeLine(x1, z1, x2, z2)
+    for i = #layout.lines, 1, -1 do
+        local line = layout.lines[i]
+        if line[1] == x1 and line[2] == z1 and line[3] == x2 and line[4] == z2 then
+            table.remove(layout.lines, i)
+            return
+        end
+    end
+end
+
+local function findBuilding(layout, x, z, size)
+    for i, pos in ipairs(layout.buildings[size]) do
+        if pos[1] == x and pos[2] == z then
+            return i
+        end
+    end
+end
+
+local function addBuilding(layout, x, z, size)
+    table.insert(layout.buildings[size], { x, z })
+end
+
+local function removeBuilding(layout, x, z, size)
+    local i = findBuilding(layout, x, z, size)
+    if i then
+        table.remove(layout.buildings[size], i)
+    end
+end
+
+-- Undo / redo
+-- ========================================
+
+-- Undoable layout edits: {do, undo}, both called as fn(layout, ...)
+local EDITS = {
+    addLine = { addLine, removeLine },
+    removeLine = { removeLine, addLine },
+    addBuilding = { addBuilding, removeBuilding },
+    removeBuilding = { removeBuilding, addBuilding },
+    translate = {
+        translateLayout,
+        function(layout, dx, dz)
+            translateLayout(layout, -dx, -dz)
+        end,
+    },
+}
+
+-- A command is a list of edits, done and undone together
+local function pushEdit(command, edit, layout, ...)
+    table.insert(command, { edit = edit, layout = layout, args = { ... } })
+end
+
+local function applyEdit(action, undo)
+    local fns = EDITS[action.edit]
+    local fn = undo and fns[2] or fns[1]
+    fn(action.layout, unpack(action.args))
+end
+
+local function runCommand(command)
+    if #command == 0 then
+        return
+    end
+    -- a new command drops the redo history
+    for i = #commandHistory, historyPointer + 1, -1 do
+        commandHistory[i] = nil
+    end
+    table.insert(commandHistory, command)
+    historyPointer = historyPointer + 1
+    for _, action in ipairs(command) do
+        applyEdit(action, false)
+    end
+end
+
+local function undo()
+    local command = commandHistory[historyPointer]
+    if command then
+        for i = #command, 1, -1 do
+            applyEdit(command[i], true)
+        end
+        historyPointer = historyPointer - 1
+    end
+end
+
+local function redo()
+    local command = commandHistory[historyPointer + 1]
+    if command then
+        historyPointer = historyPointer + 1
+        for _, action in ipairs(command) do
+            applyEdit(action, false)
+        end
+    end
+end
+
+local function pushClearLayout(command, layout)
+    for _, line in ipairs(layout.lines) do
+        pushEdit(command, "removeLine", layout, unpack(line))
+    end
+    for size, group in pairs(layout.buildings) do
+        for _, pos in ipairs(group) do
+            pushEdit(command, "removeBuilding", layout, pos[1], pos[2], size)
+        end
+    end
+end
+
+-- Adds everything from source to the current layout
+local function pushAddLayout(command, source)
+    for _, line in ipairs(source.lines) do
+        pushEdit(command, "addLine", currentLayout, unpack(line))
+    end
+    for size, group in pairs(source.buildings) do
+        for _, pos in ipairs(group) do
+            pushEdit(command, "addBuilding", currentLayout, pos[1], pos[2], size)
+        end
+    end
+end
+
+-- Camera
+-- ========================================
+
+-- Camera facing snapped to 0/90/180/270 degrees in the XZ plane
+local function getCameraSnappedAngle()
+    local dirX, _, dirZ = Spring.GetCameraDirection()
+    local length = math.sqrt(dirX * dirX + dirZ * dirZ)
+    if length < 0.0001 then
+        return 0 -- looking straight down: ambiguous
+    end
+    local tx = math.floor(dirX / length + 0.5)
+    local tz = math.floor(dirZ / length + 0.5)
+    if tx == 0 and tz > 0 then
+        return 270
+    elseif tx > 0 and tz == 0 then
+        return 180
+    elseif tx == 0 and tz < 0 then
+        return 90
+    end
+    return 0
+end
+
+-- Turns screen-relative input (dx right, dz forward) into a snapped world direction
+local function getSnappedCameraDirection(dx, dz)
+    local dirX, _, dirZ = Spring.GetCameraDirection()
+    local length = math.sqrt(dirX * dirX + dirZ * dirZ)
+    if length < 0.0001 then
+        return 0, 0 -- looking straight down: ambiguous
+    end
+    local forwardX, forwardZ = dirX / length, dirZ / length
+    local rightX, rightZ = -forwardZ, forwardX
+    local inputLength = math.sqrt(dx * dx + dz * dz)
+    dx, dz = dx / inputLength, dz / inputLength
+    local worldX = dx * rightX + dz * forwardX
+    local worldZ = dx * rightZ + dz * forwardZ
+    return math.floor(worldX + 0.5), math.floor(worldZ + 0.5)
+end
+
+-- Rotates (x, z) clockwise by a multiple of 90 degrees
+local function rotate(x, z, rotation)
+    if rotation == 90 then
+        return -z, x
+    elseif rotation == 180 then
+        return -x, -z
+    elseif rotation == 270 then
+        return z, -x
+    end
+    return x, z
+end
+
+-- Rotates the layout around its center and/or inverts it along the camera's axis, in place
+local function rotateAndInvert(layout, rotation, invert)
+    local minX, maxX, minZ, maxZ = layoutBounds(layout, true)
+    if not minX or (rotation == 0 and not invert) then
+        return
+    end
+    local cx = (minX + maxX + 1) / 2
+    local cz = (minZ + maxZ + 1) / 2
+    local cameraAngle = invert and getCameraSnappedAngle()
+    local mirrorX = invert and (cameraAngle == 90 or cameraAngle == 270)
+    local mirrorZ = invert and not mirrorX
+
+    -- size is the building size, or 0 for a line end
+    local function transform(x, z, size)
+        local half = size / 2
+        local rx, rz = rotate(x + half - cx, z + half - cz, rotation)
+        local nx = math.floor(cx + rx - half + 0.5)
+        local nz = math.floor(cz + rz - half + 0.5)
+        if mirrorX then
+            nx = 2 * cx - nx - size
+        elseif mirrorZ then
+            nz = 2 * cz - nz - size
+        end
+        return nx, nz
     end
 
-    local function DoLinesIntersect(a, b)
-        local x1, z1, x2, z2 = a[1], a[2], a[3], a[4]
-        local x3, z3, x4, z4 = b[1], b[2], b[3], b[4]
-
-        local o1 = orientation(x1, z1, x2, z2, x3, z3)
-        local o2 = orientation(x1, z1, x2, z2, x4, z4)
-        local o3 = orientation(x3, z3, x4, z4, x1, z1)
-        local o4 = orientation(x3, z3, x4, z4, x2, z2)
-
-        if o1 ~= o2 and o3 ~= o4 then
-            return true
+    for size, group in pairs(layout.buildings) do
+        for _, pos in ipairs(group) do
+            pos[1], pos[2] = transform(pos[1], pos[2], size)
         end
-        if o1 == 0 and onSegment(x1, z1, x3, z3, x2, z2) then
-            return true
-        end
-        if o2 == 0 and onSegment(x1, z1, x4, z4, x2, z2) then
-            return true
-        end
-        if o3 == 0 and onSegment(x3, z3, x1, z1, x4, z4) then
-            return true
-        end
-        if o4 == 0 and onSegment(x3, z3, x2, z2, x4, z4) then
-            return true
-        end
-
-        return false
     end
+    for _, line in ipairs(layout.lines) do
+        line[1], line[2] = transform(line[1], line[2], 0)
+        line[3], line[4] = transform(line[3], line[4], 0)
+    end
+end
 
+-- Geometry
+-- ========================================
+
+-- 0 = collinear, 1 = clockwise, 2 = counterclockwise
+local function orientation(px, pz, qx, qz, rx, rz)
+    local value = (qz - pz) * (rx - qx) - (qx - px) * (rz - qz)
+    if value == 0 then
+        return 0
+    end
+    return value > 0 and 1 or 2
+end
+
+-- Whether q lies on segment pr, given the three are collinear
+local function onSegment(px, pz, qx, qz, rx, rz)
+    return math.min(px, rx) <= qx
+        and qx <= math.max(px, rx)
+        and math.min(pz, rz) <= qz
+        and qz <= math.max(pz, rz)
+end
+
+local function linesIntersect(a, b)
+    local x1, z1, x2, z2 = a[1], a[2], a[3], a[4]
+    local x3, z3, x4, z4 = b[1], b[2], b[3], b[4]
+    local o1 = orientation(x1, z1, x2, z2, x3, z3)
+    local o2 = orientation(x1, z1, x2, z2, x4, z4)
+    local o3 = orientation(x3, z3, x4, z4, x1, z1)
+    local o4 = orientation(x3, z3, x4, z4, x2, z2)
+    return (o1 ~= o2 and o3 ~= o4)
+        or (o1 == 0 and onSegment(x1, z1, x3, z3, x2, z2))
+        or (o2 == 0 and onSegment(x1, z1, x4, z4, x2, z2))
+        or (o3 == 0 and onSegment(x3, z3, x1, z1, x4, z4))
+        or (o4 == 0 and onSegment(x3, z3, x2, z2, x4, z4))
+end
+
+-- Indices of the layout lines crossing segment
+local function getIntersectingLineIndices(layout, segment)
     local indices = {}
     for i, line in ipairs(layout.lines) do
-        if DoLinesIntersect(r, line) then
+        if linesIntersect(segment, line) then
             table.insert(indices, i)
         end
     end
     return indices
 end
 
-local function TranslateLayout(layout, dx, dz)
-    for _, group in pairs(layout.buildings) do
-        for _, pos in ipairs(group) do
-            pos[1] = pos[1] + dx
-            pos[2] = pos[2] + dz
-        end
-    end
-    for _, line in ipairs(layout.lines) do
-        line[1] = line[1] + dx
-        line[3] = line[3] + dx
-        line[2] = line[2] + dz
-        line[4] = line[4] + dz
-    end
-end
+-- Building positions from start to (endX, endZ): the whole area, or a line of them
+local function getBuildingList(start, endX, endZ, area)
+    local size = start.size
+    local x, z = start.bx, start.bz
+    local results = {}
 
-local function AddLine(x1, z1, x2, z2, layout)
-    if x1 == x2 and z1 == z2 then
-        return
-    end
-
-    -- Normalize coordinates: sort by (x, z)
-    if x2 < x1 or (x2 == x1 and z2 < z1) then
-        x1, z1, x2, z2 = x2, z2, x1, z1
-    end
-
-    local workLayout = layout or currentLayout
-    table.insert(workLayout.lines, { x1, z1, x2, z2 })
-end
-
-local function RemLine(x1, z1, x2, z2, layout)
-    -- Normalize coordinates the same way as in AddLine
-    if x2 < x1 or (x2 == x1 and z2 < z1) then
-        x1, z1, x2, z2 = x2, z2, x1, z1
-    end
-
-    local workLayout = layout or currentLayout
-    for i = #workLayout.lines, 1, -1 do
-        local line = workLayout.lines[i]
-        if line[1] == x1 and line[2] == z1 and line[3] == x2 and line[4] == z2 then
-            table.remove(workLayout.lines, i)
-            return
-        end
-    end
-end
-
-local function AddBuilding(x, z, size, layout)
-    local workLayout = layout or currentLayout
-
-    local group = workLayout.buildings[size]
-    table.insert(group, { x, z })
-end
-
-local function RemBuilding(x, z, size, layout)
-    local workLayout = layout or currentLayout
-
-    local group = workLayout.buildings[size]
-    for i, pos in ipairs(group) do
-        if pos[1] == x and pos[2] == z then
-            table.remove(group, i)
-            return
-        end
-    end
-end
-
----------------------------------------
-------------------------COMMAND PATTERN
----------------------------------------
-
-local commandHistory = {}
-local historyPointer = 0
-
-local function CreateCommand()
-    return {
-        actions = {},
-        execute = function(self)
-            for _, action in ipairs(self.actions) do
-                action.doAction()
+    if area then
+        for ax = math.min(x, endX), math.max(x, endX), size do
+            for az = math.min(z, endZ), math.max(z, endZ), size do
+                results[#results + 1] = { x = ax, z = az }
             end
-        end,
-        undo = function(self)
-            for i = #self.actions, 1, -1 do
-                self.actions[i].undoAction()
+        end
+        return results
+    end
+
+    -- Bresenham, stepping by the building size
+    local dx, dz = math.abs(endX - x), math.abs(endZ - z)
+    local sx = endX >= x and size or -size
+    local sz = endZ >= z and size or -size
+    if dx > dz then
+        local err = dx / 2
+        while (sx > 0 and x <= endX) or (sx < 0 and x >= endX) do
+            results[#results + 1] = { x = x, z = z }
+            x = x + sx
+            err = err - dz
+            if err < 0 then
+                z = z + sz
+                err = err + dx
             end
-        end,
-    }
-end
-
-local function PushTranslateAction(command, layout, dx, dz)
-    table.insert(command.actions, {
-        doAction = function()
-            TranslateLayout(layout, dx, dz)
-        end,
-        undoAction = function()
-            TranslateLayout(layout, -dx, -dz)
-        end,
-    })
-end
-
-local function PushAddLineAction(command, layout, x1, z1, x2, z2)
-    table.insert(command.actions, {
-        doAction = function()
-            AddLine(x1, z1, x2, z2, layout)
-        end,
-        undoAction = function()
-            RemLine(x1, z1, x2, z2, layout)
-        end,
-    })
-end
-
-local function PushRemLineAction(command, layout, x1, z1, x2, z2)
-    table.insert(command.actions, {
-        doAction = function()
-            RemLine(x1, z1, x2, z2, layout)
-        end,
-        undoAction = function()
-            AddLine(x1, z1, x2, z2, layout)
-        end,
-    })
-end
-
-local function PushAddBuildingAction(command, layout, x, z, size)
-    table.insert(command.actions, {
-        doAction = function()
-            AddBuilding(x, z, size, layout)
-        end,
-        undoAction = function()
-            RemBuilding(x, z, size, layout)
-        end,
-    })
-end
-
-local function PushRemBuildingAction(command, layout, x, z, size)
-    table.insert(command.actions, {
-        doAction = function()
-            RemBuilding(x, z, size, layout)
-        end,
-        undoAction = function()
-            AddBuilding(x, z, size, layout)
-        end,
-    })
-end
-
-local function RunCommand(command)
-    -- Prune forward history
-    for i = #commandHistory, historyPointer + 1, -1 do
-        commandHistory[i] = nil
-    end
-
-    table.insert(commandHistory, command)
-    historyPointer = historyPointer + 1
-    command:execute()
-
-    Spring.Echo("[Layout Planner] Command stack size: " .. #commandHistory)
-end
-
-local function Undo()
-    if historyPointer > 0 then
-        commandHistory[historyPointer]:undo()
-        historyPointer = historyPointer - 1
-    end
-end
-
-local function Redo()
-    if historyPointer < #commandHistory then
-        historyPointer = historyPointer + 1
-        commandHistory[historyPointer]:execute()
-    end
-end
-
--------------------------------------END COMMAND PATTERN-------------------------------------
-
-local function ClearLayoutActions(cmd, workLayout)
-    -- Remove all lines
-    for _, line in ipairs(workLayout.lines) do
-        PushRemLineAction(cmd, workLayout, unpack(line))
-    end
-
-    -- Remove all buildings
-    for size, group in pairs(workLayout.buildings) do
-        for _, pos in ipairs(group) do
-            PushRemBuildingAction(cmd, workLayout, pos[1], pos[2], size)
+        end
+    else
+        local err = dz / 2
+        while (sz > 0 and z <= endZ) or (sz < 0 and z >= endZ) do
+            results[#results + 1] = { x = x, z = z }
+            z = z + sz
+            err = err - dx
+            if err < 0 then
+                x = x + sx
+                err = err + dz
+            end
         end
     end
+    return results
 end
 
-local function ClearLayout(layout)
-    local cmd = CreateCommand()
-    ClearLayoutActions(cmd, layout)
-    RunCommand(cmd)
+-- Tick marks tracing the rectangle from start to (endX, endZ): corners, plus one per building size
+local function traceRectangleBounds(start, endX, endZ)
+    local size = start.size
+    local tick = size > 4 and 1 or 0.5
+    local cornerTick = tick * 2
+    -- bounds of both ends, shrunk inward by 1 BU
+    local x1 = math.min(start.bx, endX) + 1
+    local x2 = math.max(start.bx, endX) + size - 1
+    local z1 = math.min(start.bz, endZ) + 1
+    local z2 = math.max(start.bz, endZ) + size - 1
+
+    local lines = {}
+    -- {x, z, inward x direction, inward z direction}
+    for _, corner in ipairs({
+        { x1, z1, 1, 1 },
+        { x2, z1, -1, 1 },
+        { x2, z2, -1, -1 },
+        { x1, z2, 1, -1 },
+    }) do
+        local x, z, dirX, dirZ = corner[1], corner[2], corner[3], corner[4]
+        table.insert(lines, { x, z, x + dirX * cornerTick, z })
+        table.insert(lines, { x, z, x, z + dirZ * cornerTick })
+    end
+    for x = x1 + size - 1, x2 - 1, size do
+        table.insert(lines, { x - tick, z1, x + tick, z1 })
+        table.insert(lines, { x - tick, z2, x + tick, z2 })
+    end
+    for z = z1 + size - 1, z2 - 1, size do
+        table.insert(lines, { x1, z - tick, x1, z + tick })
+        table.insert(lines, { x2, z - tick, x2, z + tick })
+    end
+    return lines
 end
 
-local function MakeLayoutActions(cmd, workLayout)
-    -- Add all lines
-    for _, line in ipairs(workLayout.lines) do
-        PushAddLineAction(cmd, currentLayout, unpack(line))
+-- Merges touching collinear edges (all horizontal or all vertical) into single lines
+local function mergeEdges(edges, horizontal)
+    -- horizontal edges vary in x (indices 1, 3) at a fixed z (index 2); vertical ones the other way
+    local from, to, fixed = 2, 4, 1
+    if horizontal then
+        from, to, fixed = 1, 3, 2
     end
 
-    -- Add all buildings
-    for size, group in pairs(workLayout.buildings) do
-        for _, pos in ipairs(group) do
-            PushAddBuildingAction(cmd, currentLayout, pos[1], pos[2], size)
-        end
-    end
-end
-
---It gets a layout and returns a new one, rotated and inverted
-local function ApplyRotationAndInversion(layout, rotation, invert)
-    --local rotation = (targetOrientation - layoutOrientation) % 360
-    if rotation == 0 and not invert then
-        return -- no changes needed
-    end
-
-    -- Step 1: Compute bounds
-    local minX, maxX, minZ, maxZ = math.huge, -math.huge, math.huge, -math.huge
-    for size, list in pairs(layout.buildings) do
-        for _, pos in ipairs(list) do
-            minX = math.min(minX, pos[1])
-            maxX = math.max(maxX, pos[1] + size - 1)
-            minZ = math.min(minZ, pos[2])
-            maxZ = math.max(maxZ, pos[2] + size - 1)
-        end
-    end
-
-    for _, line in ipairs(layout.lines) do
-        local x1, z1, x2, z2 = line[1], line[2], line[3], line[4]
-        minX = math.min(minX, x1, x2)
-        maxX = math.max(maxX, x1, x2)
-        minZ = math.min(minZ, z1, z2)
-        maxZ = math.max(maxZ, z1, z2)
-    end
-
-    local width = maxX - minX + 1
-    local height = maxZ - minZ + 1
-    local cx = minX + width / 2
-    local cz = minZ + height / 2
-
-    -- Step 2: Transform each position in-place
-    for size, list in pairs(layout.buildings) do
-        for _, pos in ipairs(list) do
-            local ox = pos[1] + size / 2 - cx
-            local oz = pos[2] + size / 2 - cz
-
-            local rx, rz
-            if rotation == 0 then
-                rx, rz = ox, oz
-            elseif rotation == 90 then
-                rx, rz = -oz, ox
-            elseif rotation == 180 then
-                rx, rz = -ox, -oz
-            elseif rotation == 270 then
-                rx, rz = oz, -ox
-            else
-                error("Unsupported rotation: " .. tostring(rotation))
-            end
-
-            local newX = math.floor(cx + rx - size / 2 + 0.5)
-            local newZ = math.floor(cz + rz - size / 2 + 0.5)
-
-            if invert then
-                local camAngle = GetCameraSnappedAngle()
-                if camAngle == 90 or camAngle == 270 then
-                    newX = 2 * cx - newX - size
-                else
-                    newZ = 2 * cz - newZ - size
-                end
-            end
-
-            pos[1] = newX
-            pos[2] = newZ
-        end
-    end
-    -- TRANSFROM LINES
-    for _, line in ipairs(layout.lines) do
-        local x1, z1 = line[1], line[2]
-        local x2, z2 = line[3], line[4]
-
-        local function transformPoint(x, z)
-            local ox = x - cx
-            local oz = z - cz
-
-            local rx, rz
-            if rotation == 0 then
-                rx, rz = ox, oz
-            elseif rotation == 90 then
-                rx, rz = -oz, ox
-            elseif rotation == 180 then
-                rx, rz = -ox, -oz
-            elseif rotation == 270 then
-                rx, rz = oz, -ox
-            else
-                error("Unsupported rotation: " .. tostring(rotation))
-            end
-
-            local nx = math.floor(cx + rx + 0.5)
-            local nz = math.floor(cz + rz + 0.5)
-
-            if invert then
-                local camAngle = GetCameraSnappedAngle()
-                if camAngle == 90 or camAngle == 270 then
-                    nx = 2 * cx - nx
-                else
-                    nz = 2 * cz - nz
-                end
-            end
-
-            return nx, nz
-        end
-
-        line[1], line[2] = transformPoint(x1, z1)
-        line[3], line[4] = transformPoint(x2, z2)
-    end
-end
-
-local function DrawEdges(edges)
-    Spring.Echo("[LayoutPlanner] Queuing " .. tostring(#edges) .. " edges for rendering.")
-    drawLineQueue = {} -- Clear old queue
-
+    local groups = {}
     for _, edge in ipairs(edges) do
-        local x1, z1 = BUToWorld(edge.x1, edge.z1)
-        local x2, z2 = BUToWorld(edge.x2, edge.z2)
-        local y = 100
+        local key = edge[fixed]
+        groups[key] = groups[key] or {}
+        table.insert(groups[key], { edge[from], edge[to] })
+    end
 
-        local dx = x2 - x1
-        local dz = z2 - z1
-        local dist = math.sqrt(dx * dx + dz * dz)
-
-        local segments = math.ceil(dist / CHUNK_SIZE)
-        if segments <= 1 then
-            table.insert(drawLineQueue, {
-                startX = x1,
-                startZ = z1,
-                endX = x2,
-                endZ = z2,
-                y = y,
-            })
-        else
-            for i = 0, segments - 1 do
-                local t1 = i / segments
-                local t2 = (i + 1) / segments
-                local sx = x1 + dx * t1
-                local sz = z1 + dz * t1
-                local ex = x1 + dx * t2
-                local ez = z1 + dz * t2
-                table.insert(drawLineQueue, {
-                    startX = sx,
-                    startZ = sz,
-                    endX = ex,
-                    endZ = ez,
-                    y = y,
-                })
+    local merged = {}
+    local function emit(coord, a, b)
+        table.insert(merged, horizontal and { a, coord, b, coord } or { coord, a, coord, b })
+    end
+    for coord, segments in pairs(groups) do
+        table.sort(segments, function(s1, s2)
+            return s1[1] < s2[1]
+        end)
+        local a, b = segments[1][1], segments[1][2]
+        for i = 2, #segments do
+            local segment = segments[i]
+            if segment[1] <= b then
+                b = math.max(b, segment[2])
+            else
+                emit(coord, a, b)
+                a, b = segment[1], segment[2]
             end
         end
+        emit(coord, a, b)
     end
-    renderingToGame = true
+    return merged
 end
 
-local function CollectEdges()
-    Spring.Echo("[LayoutPlanner] Collecting and merging outer edges...")
-
-    local function edgeKey(x1, z1, x2, z2)
-        -- Normalize to avoid reversed duplicates keys
-        if x1 > x2 or (x1 == x2 and z1 > z2) then
-            x1, z1, x2, z2 = x2, z2, x1, z1
-        end
-        return x1 .. "," .. z1 .. "," .. x2 .. "," .. z2
-    end
-
-    local rawEdges = {}
-
-    -- 1. Generate 4 outer edges per building
-    for size, buildings in pairs(currentLayout.buildings) do
-        for _, pos in ipairs(buildings) do
-            local bx, bz = pos[1], pos[2]
-            local edges = {
-                { bx, bz, bx + size, bz }, -- top
-                { bx + size, bz, bx + size, bz + size }, -- right
-                { bx + size, bz + size, bx, bz + size }, -- bottom
-                { bx, bz + size, bx, bz }, -- left
-            }
-
-            for _, e in ipairs(edges) do
-                local k = edgeKey(unpack(e))
-                if rawEdges[k] then
-                    rawEdges[k] = nil -- shared/internal edge — remove it
+-- The outlines of the buildings plus the layout's lines, in BUs
+local function collectEdges()
+    -- Building edges shared by two buildings are inside a shape, so they cancel out.
+    -- Edges are written low end first, so a shared edge has the same key both times.
+    local edges = {}
+    for size, group in pairs(currentLayout.buildings) do
+        for _, pos in ipairs(group) do
+            local x, z = pos[1], pos[2]
+            for _, edge in ipairs({
+                { x, z, x + size, z },
+                { x + size, z, x + size, z + size },
+                { x, z + size, x + size, z + size },
+                { x, z, x, z + size },
+            }) do
+                local key = table.concat(edge, ",")
+                if edges[key] then
+                    edges[key] = nil
                 else
-                    rawEdges[k] = { x1 = e[1], z1 = e[2], x2 = e[3], z2 = e[4] }
+                    edges[key] = edge
                 end
             end
         end
     end
 
-    -- 2. Group by horizontal and vertical
     local horizontal, vertical = {}, {}
-    for _, edge in pairs(rawEdges) do
-        if edge.z1 == edge.z2 then
-            table.insert(horizontal, edge)
-        elseif edge.x1 == edge.x2 then
-            table.insert(vertical, edge)
-        end
+    for _, edge in pairs(edges) do
+        table.insert(edge[2] == edge[4] and horizontal or vertical, edge)
     end
 
-    local function mergeLines(edges, isHorizontal)
-        local merged = {}
-        local axis1, axis2 = isHorizontal and "x" or "z", isHorizontal and "z" or "x"
-
-        -- Group by fixed axis2 (e.g., all z for horizontal lines)
-        local groups = {}
-        for _, e in ipairs(edges) do
-            local key = tostring(e[axis2 .. "1"])
-            groups[key] = groups[key] or {}
-            local a1 = math.min(e[axis1 .. "1"], e[axis1 .. "2"])
-            local a2 = math.max(e[axis1 .. "1"], e[axis1 .. "2"])
-            table.insert(groups[key], { a1 = a1, a2 = a2 })
-        end
-
-        for coord, segs in pairs(groups) do
-            table.sort(segs, function(a, b)
-                return a.a1 < b.a1
-            end)
-
-            local currentA1, currentA2 = segs[1].a1, segs[1].a2
-            for i = 2, #segs do
-                local seg = segs[i]
-                if seg.a1 <= currentA2 then
-                    currentA2 = math.max(currentA2, seg.a2) -- merge
-                else
-                    -- emit previous
-                    local line = isHorizontal
-                            and {
-                                x1 = currentA1,
-                                z1 = tonumber(coord),
-                                x2 = currentA2,
-                                z2 = tonumber(coord),
-                            }
-                        or {
-                            x1 = tonumber(coord),
-                            z1 = currentA1,
-                            x2 = tonumber(coord),
-                            z2 = currentA2,
-                        }
-                    table.insert(merged, line)
-                    currentA1, currentA2 = seg.a1, seg.a2
-                end
-            end
-            -- final segment
-            local line = isHorizontal
-                    and {
-                        x1 = currentA1,
-                        z1 = tonumber(coord),
-                        x2 = currentA2,
-                        z2 = tonumber(coord),
-                    }
-                or { x1 = tonumber(coord), z1 = currentA1, x2 = tonumber(coord), z2 = currentA2 }
-            table.insert(merged, line)
-        end
-
-        return merged
+    local result = mergeEdges(horizontal, true)
+    for _, edge in ipairs(mergeEdges(vertical, false)) do
+        table.insert(result, edge)
     end
-
-    -- 3. Merge all segments
-    local result = {}
-    for _, e in ipairs(mergeLines(horizontal, true)) do
-        table.insert(result, e)
-    end
-    for _, e in ipairs(mergeLines(vertical, false)) do
-        table.insert(result, e)
-    end
-
     for _, line in ipairs(currentLayout.lines) do
-        table.insert(result, { x1 = line[1], z1 = line[2], x2 = line[3], z2 = line[4] })
+        table.insert(result, line)
     end
-
-    Spring.Echo("[LayoutPlanner] Final edge count:", #result)
     return result
 end
 
-local function CollectAndDraw()
-    DrawEdges(CollectEdges())
+-- Queues the current layout's outlines and lines to be drawn as map marks
+local function renderLayout()
+    local edges = collectEdges()
+    log("rendering " .. #edges .. " lines")
+    markQueue = {}
+    for _, edge in ipairs(edges) do
+        local x1, z1 = buToWorld(edge[1], edge[2])
+        local x2, z2 = buToWorld(edge[3], edge[4])
+        local dx, dz = x2 - x1, z2 - z1
+        local segments = math.max(1, math.ceil(math.sqrt(dx * dx + dz * dz) / CHUNK_SIZE))
+        for i = 0, segments - 1 do
+            local t1, t2 = i / segments, (i + 1) / segments
+            table.insert(markQueue, { x1 + dx * t1, z1 + dz * t1, x1 + dx * t2, z1 + dz * t2 })
+        end
+    end
 end
 
-local function CopyLayout(src)
-    local copy = {
-        buildings = {
-            [1] = {},
-            [2] = {},
-            [3] = {},
-            [4] = {},
-            [6] = {},
-            [12] = {},
-        },
-        lines = {},
-    } -- new layout
-    for size, group in pairs(src.buildings) do
-        --copy.buildings[size] = {}
+-- Files
+-- ========================================
+
+local function layoutPath(slot)
+    return USER_DIR .. "/layout_" .. slot .. ".txt"
+end
+
+local function serializeLayout(layout)
+    local out = { "{", "    buildings = {" }
+    for size, group in pairs(layout.buildings) do
+        table.insert(out, "        [" .. size .. "] = {")
         for _, pos in ipairs(group) do
-            table.insert(copy.buildings[size], { pos[1], pos[2] })
+            table.insert(out, string.format("            {%d, %d},", pos[1], pos[2]))
         end
+        table.insert(out, "        },")
     end
-    for _, line in ipairs(src.lines) do
-        table.insert(copy.lines, { line[1], line[2], line[3], line[4] })
+    table.insert(out, "    },")
+    table.insert(out, "    lines = {")
+    for _, line in ipairs(layout.lines) do
+        table.insert(
+            out,
+            string.format("        {%d, %d, %d, %d},", line[1], line[2], line[3], line[4])
+        )
     end
-    return copy
+    table.insert(out, "    },")
+    table.insert(out, "}")
+    return table.concat(out, "\n")
 end
 
-local function SaveLayout(slot, layout)
-    local workLayout = layout or currentLayout
-
-    local filename = layoutPath(slot)
-    local minX, maxX = math.huge, -math.huge
-    local minZ, maxZ = math.huge, -math.huge
-    local minSize = math.huge
-
-    for k, v in pairs(workLayout.buildings) do
-        if #v > 0 and k < minSize then
-            minSize = k
-        end
-    end
-    for _, positions in pairs(workLayout.buildings) do
-        for _, pos in ipairs(positions) do
-            local x, z = pos[1], pos[2]
-            if x < minX then
-                minX = x
-            end
-            if x > maxX then
-                maxX = x
-            end
-            if z < minZ then
-                minZ = z
-            end
-            if z > maxZ then
-                maxZ = z
-            end
-        end
-    end
-    for _, line in ipairs(workLayout.lines) do
-        local x, z = line[1], line[2]
-        if x < minX then
-            minX = x
-        end
-        if x > maxX then
-            maxX = x
-        end
-        if z < minZ then
-            minZ = z
-        end
-        if z > maxZ then
-            maxZ = z
-        end
-        x, z = line[3], line[4]
-        if x < minX then
-            minX = x
-        end
-        if x > maxX then
-            maxX = x
-        end
-        if z < minZ then
-            minZ = z
-        end
-        if z > maxZ then
-            maxZ = z
-        end
-    end
-    if maxX == math.huge then
-        Spring.Echo("[LayoutPlanner] Nothing to save.")
+-- Saves the layout moved to the origin, with the size info placing it again needs
+local function saveLayout(slot, layout)
+    local minX, maxX, minZ, maxZ = layoutBounds(layout, false)
+    if not minX then
+        log("nothing to save")
         return
     end
 
+    local minSize = math.huge
+    for size, group in pairs(layout.buildings) do
+        if #group > 0 then
+            minSize = math.min(minSize, size)
+        end
+    end
     if minSize == math.huge then
         minSize = 1
     end
 
-    local width = maxX - minX + 1
-    local height = maxZ - minZ + 1
+    local copy = copyLayout(layout)
+    translateLayout(copy, -minX, -minZ)
 
-    local function SerializeLayout(wLayout)
-        local result = {}
-        local indentLevel = 0
-
-        local function indent()
-            return string.rep("  ", indentLevel)
-        end
-
-        local function addLine(line)
-            table.insert(result, indent() .. line)
-        end
-
-        addLine("{")
-        indentLevel = indentLevel + 1
-
-        -- Serialize buildings
-        addLine("buildings = {")
-        indentLevel = indentLevel + 1
-        for size, positions in pairs(wLayout.buildings) do
-            addLine("[" .. size .. "] = {")
-            indentLevel = indentLevel + 1
-            for _, pos in ipairs(positions) do
-                addLine(string.format("{%d, %d},", pos[1], pos[2]))
-            end
-            indentLevel = indentLevel - 1
-            addLine("},")
-        end
-        indentLevel = indentLevel - 1
-        addLine("},")
-
-        -- Serialize lines
-        addLine("lines = {")
-        indentLevel = indentLevel + 1
-        --Spring.Echo("Saving lines .. "..#workLayout.lines)
-        for _, line in ipairs(wLayout.lines) do
-            addLine(string.format("{%d, %d, %d, %d},", line[1], line[2], line[3], line[4]))
-        end
-        indentLevel = indentLevel - 1
-        addLine("}")
-
-        indentLevel = indentLevel - 1
-        addLine("}")
-
-        return table.concat(result, "\n")
-    end
-
+    local path = layoutPath(slot)
     Spring.CreateDir(USER_DIR)
-    local file = io.open(filename, "w")
+    local file = io.open(path, "w")
     if not file then
-        Spring.Echo("[LayoutPlanner] Failed to open file for saving layout: " .. filename)
+        log("ERROR - failed to open " .. path)
         return
     end
-
-    local layoutCopy = CopyLayout(workLayout)
-    TranslateLayout(layoutCopy, -minX, -minZ)
-
     file:write("return {\n")
-    file:write("  width = " .. width .. ",\n")
-    file:write("  height = " .. height .. ",\n")
-    file:write("  maxX = " .. maxX .. ",\n")
-    file:write("  maxZ = " .. maxZ .. ",\n")
-    file:write("  minSize = " .. minSize .. ",\n")
-    file:write("  layout = " .. SerializeLayout(layoutCopy) .. "\n")
+    file:write("    width = " .. (maxX - minX + 1) .. ",\n")
+    file:write("    height = " .. (maxZ - minZ + 1) .. ",\n")
+    file:write("    minSize = " .. minSize .. ",\n")
+    file:write("    layout = " .. serializeLayout(copy) .. ",\n")
     file:write("}\n")
     file:close()
-
-    Spring.Echo("[LayoutPlanner] Layout saved: " .. filename)
+    log("layout saved: " .. path)
 end
 
-local function LoadLayout(slot)
-    local filename = layoutPath(slot)
-    local chunk, err = loadfile(filename)
-
-    if chunk then
-        local ok, result = pcall(chunk)
-        if ok and type(result) == "table" then
-            loadedData = result
-            -- ClearLayout()
-            Spring.Echo("[LayoutPlanner] Layout loaded: " .. filename)
-            return
-        else
-            Spring.Echo("[LayoutPlanner] Error running chunk, attempting legacy fallback")
-        end
-    else
-        Spring.Echo("[LayoutPlanner] Failed to load layout file:", err)
-    end
-
-    -- Legacy fallback
-    local file = io.open(filename, "r")
+-- Converts a save from the old "x, z, size" per line format
+local function convertLegacyLayout(slot)
+    local file = io.open(layoutPath(slot), "r")
     if not file then
-        Spring.Echo("[LayoutPlanner] Could not find file", filename)
+        log("no layout in slot " .. slot)
         return
     end
 
-    Spring.Echo("[LayoutPlanner] Trying to convert legacy save format")
-    local tempLayout = {
-        buildings = {
-            [1] = {},
-            [2] = {},
-            [3] = {},
-            [4] = {},
-            [6] = {},
-            [12] = {},
-        },
-        lines = {},
-    } --Stores the current working layout
-
+    local layout = newLayout()
     for line in file:lines() do
         local x, z, size = line:match("^(%-?%d+),%s*(%-?%d+),%s*(%d+)$")
-        local nx, nz, nsize = tonumber(x), tonumber(z), tonumber(size)
-        if nx and nz and nsize then
-            AddBuilding(nx, nz, nsize, tempLayout)
-        else
-            Spring.Echo("[LayoutPlanner] Could not parse line in legacy format:", line)
+        if not x then
+            log("ERROR - can't parse layout file line: " .. line)
             file:close()
             return
         end
+        addBuilding(layout, tonumber(x), tonumber(z), tonumber(size))
     end
-
     file:close()
-    SaveLayout(slot, tempLayout)
-    Spring.Echo("[LayoutPlanner] Legacy format converted and saved. Reload the layout.")
+
+    saveLayout(slot, layout)
+    log("converted an old layout file, load it again")
 end
 
-local GRID_COLOR = { 1, 1, 1, 1 } -- Yellow with transparency
-local LINE_WIDTH = 2
-local HEIGHT_OFFSET = 5 -- raise lines above ground
-local RADIUS_CHUNKS = 8 -- how many chunks out from center
-
-local function DrawChunkGrid(cx, cz)
-    gl.PushAttrib(GL.ALL_ATTRIB_BITS)
-    gl.Color(GRID_COLOR)
-    gl.DepthTest(true)
-    gl.LineWidth(LINE_WIDTH)
-
-    gl.BeginEnd(GL.LINES, function()
-        local centerChunkX = math.floor(cx / CHUNK_SIZE)
-        local centerChunkZ = math.floor(cz / CHUNK_SIZE)
-
-        local minChunkX = centerChunkX - RADIUS_CHUNKS
-        local maxChunkX = centerChunkX + RADIUS_CHUNKS
-        local minChunkZ = centerChunkZ - RADIUS_CHUNKS
-        local maxChunkZ = centerChunkZ + RADIUS_CHUNKS
-
-        -- At the top (optional for performance)
-        local maxDistSq = (RADIUS_CHUNKS * CHUNK_SIZE) ^ 2
-
-        -- Vertical lines (x lines, varying z)
-        for chunkX = minChunkX, maxChunkX do
-            local x = chunkX * CHUNK_SIZE
-            for chunkZ = minChunkZ, maxChunkZ - 1 do
-                local z1 = chunkZ * CHUNK_SIZE
-                local z2 = z1 + CHUNK_SIZE
-                local midX = x + CHUNK_SIZE / 2
-                local midZ = z1 + CHUNK_SIZE / 2
-                local dx = midX - cx
-                local dz = midZ - cz
-                local distSq = dx * dx + dz * dz
-                if distSq <= maxDistSq then
-                    local alpha = 1.0 - (distSq / maxDistSq) -- 1 at center, 0 at edge
-                    alpha = alpha * GRID_COLOR[4] -- scale by original alpha
-                    local y1 = Spring.GetGroundHeight(x, z1) + HEIGHT_OFFSET
-                    local y2 = Spring.GetGroundHeight(x, z2) + HEIGHT_OFFSET
-                    gl.Color(GRID_COLOR[1], GRID_COLOR[2], GRID_COLOR[3], alpha)
-                    gl.Vertex(x, y1, z1)
-                    gl.Vertex(x, y2, z2)
-                end
-            end
-        end
-
-        -- Horizontal lines (z lines, varying x)
-        for chunkZ = minChunkZ, maxChunkZ do
-            local z = chunkZ * CHUNK_SIZE
-            for chunkX = minChunkX, maxChunkX - 1 do
-                local x1 = chunkX * CHUNK_SIZE
-                local x2 = x1 + CHUNK_SIZE
-                local midX = x1 + CHUNK_SIZE / 2
-                local midZ = z + CHUNK_SIZE / 2
-                local dx = midX - cx
-                local dz = midZ - cz
-                local distSq = dx * dx + dz * dz
-                if distSq <= maxDistSq then
-                    local alpha = 1.0 - (distSq / maxDistSq)
-                    alpha = alpha * GRID_COLOR[4]
-                    local y1 = Spring.GetGroundHeight(x1, z) + HEIGHT_OFFSET
-                    local y2 = Spring.GetGroundHeight(x2, z) + HEIGHT_OFFSET
-                    gl.Color(GRID_COLOR[1], GRID_COLOR[2], GRID_COLOR[3], alpha)
-                    gl.Vertex(x1, y1, z)
-                    gl.Vertex(x2, y2, z)
-                end
-            end
-        end
-    end)
-
-    gl.LineWidth(1)
-    gl.Color(1, 1, 1, 1)
-    gl.DepthTest(true)
-    gl.PopAttrib()
-end
-
---------------------------------------------------------------------------------
--- PREFERENCES TO FILE
-local function SaveUserPreferences()
-    Spring.CreateDir(USER_DIR)
-    local file = io.open(CONFIG_PATH, "w")
-    if not file then
-        Spring.Echo("[LayoutPlanner] Failed to save config.")
-        return
+local function loadLayout(slot)
+    local path = layoutPath(slot)
+    local chunk = loadfile(path) -- fails on old format files, which aren't Lua
+    local ok, data = false, nil
+    if chunk then
+        ok, data = pcall(chunk)
     end
-
-    --file:write("slots = ", slots, "\n")
-    --file:write("slotsPerRow = ", slotsPerRow, "\n")
-    file:write("allowTranslationByKeys = ", tostring(allowTranslationByKeys), "\n")
-    file:write("snapBuilding = ", tostring(snapBuilding), "\n")
-    file:write("drawChunkGrid = ", tostring(drawChunkGrid), "\n")
-    file:write("differTypesByColor = ", tostring(differTypesByColor), "\n")
-    file:write("showUsageTips = ", tostring(showUsageTips), "\n")
-
-    if myUI then
-        file:write("windowX = ", myUI.x, "\n")
-        file:write("windowY = ", myUI.y, "\n")
+    if ok and type(data) == "table" and type(data.layout) == "table" then
+        loadedData = data
+        log("layout loaded: " .. path)
+    else
+        convertLegacyLayout(slot)
     end
-
-    file:close()
-    Spring.Echo("[LayoutPlanner] Config saved.")
 end
 
-local function LoadUserPreferences()
+local function loadPreferences()
     local chunk = loadfile(CONFIG_PATH) or loadfile(DEFAULT_CONFIG_PATH)
     if not chunk then
-        Spring.Echo("[LayoutPlanner] No config file found.")
+        log("no config file found")
         return
     end
 
     local env = {}
     setfenv(chunk, env)
-    chunk()
-
-    slots = env.slots or slots
-    slotsPerRow = env.slotsPerRow or slotsPerRow
-    allowTranslationByKeys = env.allowTranslationByKeys ~= false -- default true
-    snapBuilding = env.snapBuilding ~= false
-    drawChunkGrid = env.drawChunkGrid ~= false
-    differTypesByColor = env.differTypesByColor ~= false
-    showUsageTips = env.showUsageTips ~= false
-    windowX = env.windowX or windowX
-    windowY = env.windowY or windowY
-
-    Spring.Echo("[LayoutPlanner] Config loaded.")
+    if not pcall(chunk) then
+        log("ERROR - failed to read the config file")
+        return
+    end
+    for _, key in ipairs(PREF_KEYS) do
+        if env[key] ~= nil then
+            prefs[key] = env[key]
+        end
+    end
 end
 
-local function DisableWidget()
-    SaveUserPreferences()
-    Spring.Echo("[LayoutPlanner] Closed")
-    widgetHandler:RemoveWidget()
+local function savePreferences()
+    if myUI then
+        prefs.windowX, prefs.windowY = myUI.x, myUI.y
+    end
+    local lines = {}
+    for _, key in ipairs(PREF_KEYS) do
+        if prefs[key] ~= nil then
+            table.insert(lines, key .. " = " .. tostring(prefs[key]))
+        end
+    end
+
+    Spring.CreateDir(USER_DIR)
+    local file = io.open(CONFIG_PATH, "w")
+    if not file then
+        log("ERROR - failed to save config")
+        return
+    end
+    file:write(table.concat(lines, "\n") .. "\n")
+    file:close()
 end
 
-local gl = gl
-local glColor = gl.Color
-local glRect = gl.Rect
-local glText = gl.Text
-local glGetTextWidth = gl.GetTextWidth
-local currentToolTip = nil
---------------------------------------------------------------------------------
--- Base Component
-local function BaseElement(params)
+-- Drawing
+-- ========================================
+
+-- Square building footprint at BU (bx, bz)
+local function drawSquare(bx, bz, size)
+    local x, z = buToWorld(bx, bz)
+    local y = Spring.GetGroundHeight(x, z) + DRAW_HEIGHT
+    local length = BU_SIZE * size
+    gl.BeginEnd(GL.QUADS, function()
+        gl.Vertex(x, y, z)
+        gl.Vertex(x + length, y, z)
+        gl.Vertex(x + length, y, z + length)
+        gl.Vertex(x, y, z + length)
+    end)
+end
+
+-- Lines in BUs, shifted by (dx, dz) BUs and raised by yOffset
+local function drawLines(lines, dx, dz, yOffset)
+    gl.BeginEnd(GL.LINES, function()
+        for _, line in ipairs(lines) do
+            local x1, z1 = buToWorld(line[1] + dx, line[2] + dz)
+            local x2, z2 = buToWorld(line[3] + dx, line[4] + dz)
+            gl.Vertex(x1, Spring.GetGroundHeight(x1, z1) + yOffset, z1)
+            gl.Vertex(x2, Spring.GetGroundHeight(x2, z2) + yOffset, z2)
+        end
+    end)
+end
+
+-- Chunk grid around (cx, cz), fading out with the distance
+local function drawChunkGrid(cx, cz)
+    local maxDistSq = (GRID_RADIUS_CHUNKS * CHUNK_SIZE) ^ 2
+    local centerX = math.floor(cx / CHUNK_SIZE)
+    local centerZ = math.floor(cz / CHUNK_SIZE)
+
+    -- One chunk-long grid line, faded by the distance of the chunk it starts at
+    local function segment(x1, z1, x2, z2)
+        local distSq = (x1 + CHUNK_SIZE / 2 - cx) ^ 2 + (z1 + CHUNK_SIZE / 2 - cz) ^ 2
+        if distSq <= maxDistSq then
+            gl.Color(1, 1, 1, 1 - distSq / maxDistSq)
+            gl.Vertex(x1, Spring.GetGroundHeight(x1, z1) + DRAW_HEIGHT, z1)
+            gl.Vertex(x2, Spring.GetGroundHeight(x2, z2) + DRAW_HEIGHT, z2)
+        end
+    end
+
+    gl.LineWidth(2)
+    gl.BeginEnd(GL.LINES, function()
+        for i = -GRID_RADIUS_CHUNKS, GRID_RADIUS_CHUNKS do
+            for j = -GRID_RADIUS_CHUNKS, GRID_RADIUS_CHUNKS - 1 do
+                local x, z = (centerX + i) * CHUNK_SIZE, (centerZ + j) * CHUNK_SIZE
+                segment(x, z, x, z + CHUNK_SIZE)
+                x, z = (centerX + j) * CHUNK_SIZE, (centerZ + i) * CHUNK_SIZE
+                segment(x, z, x + CHUNK_SIZE, z)
+            end
+        end
+    end)
+end
+
+local function drawLayout(layout)
+    for _, size in ipairs(SIZE_DRAW_ORDER) do
+        if prefs.differTypesByColor and SIZE_COLORS[size] then
+            gl.Color(SIZE_COLORS[size])
+        else
+            gl.Color(0, 1, 0, 0.3)
+        end
+        for _, pos in ipairs(layout.buildings[size]) do
+            drawSquare(pos[1], pos[2], size)
+        end
+    end
+    gl.Color(0, 1, 0, 0.6)
+    gl.LineWidth(3)
+    drawLines(layout.lines, 0, 0, DRAW_HEIGHT)
+end
+
+-- Offset that centers a loaded layout on BU (bx, bz)
+---@param data LoadedLayout
+local function loadedOffset(data, bx, bz)
+    return bx - math.floor((data.width + data.minSize) / 2),
+        bz - math.floor((data.height + data.minSize) / 2)
+end
+
+-- Preview of what a click at pos would do
+local function drawPreview(pos)
+    local alt, ctrl = Spring.GetModKeyState()
+    local bx, bz = buildingAnchor(pos)
+    gl.Color(1, 1, 0, 0.4)
+
+    if loadedData then
+        local dx, dz = loadedOffset(loadedData, bx, bz)
+        for size, group in pairs(loadedData.layout.buildings) do
+            for _, b in ipairs(group) do
+                drawSquare(b[1] + dx, b[2] + dz, size)
+            end
+        end
+        gl.LineWidth(3)
+        drawLines(loadedData.layout.lines, dx, dz, DRAW_HEIGHT + 1)
+    elseif drawingMode and lineStart then
+        local ex, ez = lineAnchor(pos)
+        if alt then
+            gl.Color(1, 0.5, 0, 1)
+        else
+            gl.Color(1, 1, 0, 1)
+        end
+        gl.LineWidth(3)
+        drawLines({ { lineStart.bx, lineStart.bz, ex, ez } }, 0, 0, DRAW_HEIGHT)
+
+        if alt then
+            local crossed = {}
+            for _, i in
+                ipairs(
+                    getIntersectingLineIndices(
+                        currentLayout,
+                        { lineStart.bx, lineStart.bz, ex, ez }
+                    )
+                )
+            do
+                table.insert(crossed, currentLayout.lines[i])
+            end
+            gl.LineWidth(4)
+            gl.Color(0.7, 0.3, 1, 1)
+            drawLines(crossed, 0, 0, DRAW_HEIGHT)
+        end
+    elseif drawingMode then
+        local size = dragStart and dragStart.size or BUILDING_TYPES[currentSizeIndex].size
+        bx, bz = snapToSize(bx, bz, size)
+        if dragStart and alt and ctrl then
+            drawLines(traceRectangleBounds(dragStart, bx, bz), 0, 0, DRAW_HEIGHT)
+            return
+        end
+
+        local list = dragStart and getBuildingList(dragStart, bx, bz, alt) or { { x = bx, z = bz } }
+        if #list == 1 then
+            -- marks where a right click would start a line
+            local x, z = buToWorld(lineAnchor(pos))
+            local y = Spring.GetGroundHeight(x, z) + DRAW_HEIGHT
+            gl.BeginEnd(GL.QUADS, function()
+                gl.Vertex(x - 2, y, z - 2)
+                gl.Vertex(x + 2, y, z - 2)
+                gl.Vertex(x + 2, y, z + 2)
+                gl.Vertex(x - 2, y, z + 2)
+            end)
+        end
+        for _, b in ipairs(list) do
+            drawSquare(b.x, b.z, size)
+        end
+    end
+end
+
+-- Mouse actions
+-- ========================================
+
+-- Places a loaded layout centered on BU (bx, bz); merge keeps the current layout
+-- and the loaded one for more placements
+---@param data LoadedLayout
+local function placeLoadedLayout(data, bx, bz, merge)
+    local layout = copyLayout(data.layout)
+    translateLayout(layout, loadedOffset(data, bx, bz))
+    local command = {}
+    if not merge then
+        pushClearLayout(command, currentLayout)
+        loadedData = nil
+    end
+    pushAddLayout(command, layout)
+    runCommand(command)
+    log("layout placed")
+end
+
+-- Toggles the buildings from dragStart to (bx, bz), or traces the rectangle with ctrl+alt
+local function finishBuildingDrag(start, bx, bz)
+    local alt, ctrl = Spring.GetModKeyState()
+    local command = {}
+    if alt and ctrl then
+        for _, line in ipairs(traceRectangleBounds(start, bx, bz)) do
+            pushEdit(command, "addLine", currentLayout, unpack(line))
+        end
+    else
+        for _, b in ipairs(getBuildingList(start, bx, bz, alt)) do
+            local exists = findBuilding(currentLayout, b.x, b.z, start.size)
+            pushEdit(
+                command,
+                exists and "removeBuilding" or "addBuilding",
+                currentLayout,
+                b.x,
+                b.z,
+                start.size
+            )
+        end
+    end
+    runCommand(command)
+end
+
+-- Adds the line from lineStart to (ex, ez), or removes the lines it crosses with alt
+local function finishLineDrag(start, ex, ez)
+    local alt = Spring.GetModKeyState()
+    local command = {}
+    if alt then
+        for _, i in
+            ipairs(getIntersectingLineIndices(currentLayout, { start.bx, start.bz, ex, ez }))
+        do
+            pushEdit(command, "removeLine", currentLayout, unpack(currentLayout.lines[i]))
+        end
+    else
+        pushEdit(command, "addLine", currentLayout, start.bx, start.bz, ex, ez)
+    end
+    runCommand(command)
+end
+
+-- UI toolkit (keep in sync with build-orders.lua)
+-- ========================================
+
+local TITLE_BAR_HEIGHT = 32
+local TOOLTIP_FONT_SIZE = 16
+local TRANSPARENT = { 0, 0, 0, 0 }
+
+local currentTooltip = nil -- tooltip of the hovered element, picked while drawing
+
+local function contains(el, mx, my)
+    return mx >= el.x and mx <= el.x + el.width and my >= el.y and my <= el.y + el.height
+end
+
+-- True if the mouse is over el; also makes el's tooltip the one shown this frame
+local function isHovered(el)
+    local mx, my = Spring.GetMouseState()
+    local hovered = contains(el, mx, my)
+    if hovered and el.tooltip then
+        currentTooltip = el.tooltip
+    end
+    return hovered
+end
+
+local function lighten(color, factor)
     return {
-        x = params.x or 0,
-        y = params.y or 0,
+        color[1] + (1 - color[1]) * factor,
+        color[2] + (1 - color[2]) * factor,
+        color[3] + (1 - color[3]) * factor,
+        color[4] or 1,
+    }
+end
+
+local function drawBackground(el, color)
+    gl.Color(color)
+    gl.Rect(el.x, el.y, el.x + el.width, el.y + el.height)
+end
+
+-- Draws el.text vertically centered, starting at x
+local function drawText(el, x)
+    gl.Color(el.fontColor)
+    gl.Text(el.text, x, el.y + (el.height - el.fontSize) / 2 + 2, el.fontSize, "")
+end
+
+local function drawTooltip()
+    if not currentTooltip then
+        return
+    end
+
+    local padding = 6
+    local lineHeight = TOOLTIP_FONT_SIZE + 4
+    local lines = {}
+    local width = 0
+    for line in currentTooltip:gmatch("[^\n]+") do
+        table.insert(lines, line)
+        width = math.max(width, gl.GetTextWidth(line) * TOOLTIP_FONT_SIZE)
+    end
+    local height = #lines * lineHeight - 4 + 2 * padding
+
+    local mx, my = Spring.GetMouseState()
+    my = my + 6
+    gl.Color(0.9, 0.5, 0.1, 0.9)
+    gl.Rect(mx - 2, my - 6, mx + width + 2 * padding + 2, my + height + 2)
+    gl.Color(1, 1, 1, 1)
+    local y = my + height - padding - TOOLTIP_FONT_SIZE
+    for _, line in ipairs(lines) do
+        gl.Text(line, mx + padding, y, TOOLTIP_FONT_SIZE, "")
+        y = y - lineHeight
+    end
+end
+
+-- Elements have x, y (bottom-left), width and height in screen pixels; containers
+-- position their children while drawing. MousePress is only called on a hit.
+local function makeElement(params)
+    return {
+        x = 0,
+        y = 0,
         width = params.width or 100,
         height = params.height or 30,
         bgColor = params.bgColor or { 0.1, 0.1, 0.1, 0.8 },
         margin = params.margin or 0,
         padding = params.padding or 0,
         tooltip = params.tooltip,
-
-        Draw = function() end,
-        MousePress = function()
-            return false
-        end,
-        KeyPress = function() end,
-
         GetSize = function(self)
             return self.width, self.height
         end,
-
-        Hover = function(self, mx, my)
-            if
-                self.tooltip
-                and mx >= self.x
-                and mx <= self.x + self.width
-                and my >= self.y
-                and my <= self.y + self.height
-            then
-                currentToolTip = self.tooltip
-                return true
-            end
+        Draw = function() end,
+        MousePress = function()
             return false
         end,
     }
 end
 
---------------------------------------------------------------------------------
--- Box (Container)
-local function Box(params)
-    local box = BaseElement(params)
+local function makeBox(params)
+    local box = makeElement(params)
     box.orientation = params.orientation or "vertical"
     box.padding = params.padding or 4
     box.spacing = params.spacing or 4
@@ -1078,539 +1139,200 @@ local function Box(params)
         table.insert(self.children, child)
     end
 
-    function box:Hover(mx, my)
-        for _, child in ipairs(self.children) do
-            if child:Hover(mx, my) then
-                return true
-            end
-        end
-        return false
-    end
-
     function box:GetSize()
-        local totalWidth, totalHeight = 0, 0
-
+        local width, height = 0, 0
         for i, child in ipairs(self.children) do
             local cw, ch = child:GetSize()
-            local margin = child.margin or 0
-
+            local gap = i > 1 and self.spacing or 0
             if self.orientation == "vertical" then
-                totalHeight = totalHeight + ch + 2 * margin
-                if i > 1 then
-                    totalHeight = totalHeight + self.spacing
-                end
-                totalWidth = math.max(totalWidth, cw + 2 * margin)
+                height = height + ch + 2 * child.margin + gap
+                width = math.max(width, cw + 2 * child.margin)
             else
-                totalWidth = totalWidth + cw + 2 * margin
-                if i > 1 then
-                    totalWidth = totalWidth + self.spacing
-                end
-                totalHeight = math.max(totalHeight, ch + 2 * margin)
+                width = width + cw + 2 * child.margin + gap
+                height = math.max(height, ch + 2 * child.margin)
             end
         end
-
-        self.width = totalWidth + 2 * self.padding
-        self.height = totalHeight + 2 * self.padding
+        self.width = width + 2 * self.padding
+        self.height = height + 2 * self.padding
         return self.width, self.height
     end
 
     function box:Draw()
-        glColor(self.bgColor)
-        glRect(self.x, self.y, self.x + self.width, self.y + self.height)
-
-        local cx = self.x + self.padding
-        local cyTop = self.y + self.height - self.padding -- Top Y
-
-        if self.orientation == "vertical" then
-            local cy = cyTop
-            for _, child in ipairs(self.children) do
-                local _, ch = child:GetSize()
-                local margin = child.margin or 0
-                cy = cy - ch - 2 * margin
-                child.x = cx + margin
-                child.y = cy + margin
-                child:Draw()
-                cy = cy - self.spacing
-            end
-        else
-            for _, child in ipairs(self.children) do
-                local cw, ch = child:GetSize()
-                local margin = child.margin or 0
-                child.x = cx + margin
-                -- Align to top of box (subtract height and margin from top)
-                child.y = cyTop - ch - margin
-                child:Draw()
-                cx = cx + cw + 2 * margin + self.spacing
+        drawBackground(self, self.bgColor)
+        local x = self.x + self.padding
+        local top = self.y + self.height - self.padding
+        for _, child in ipairs(self.children) do
+            local cw, ch = child:GetSize()
+            child.x = x + child.margin
+            child.y = top - ch - child.margin
+            child:Draw()
+            if self.orientation == "vertical" then
+                top = top - ch - 2 * child.margin - self.spacing
+            else
+                x = x + cw + 2 * child.margin + self.spacing
             end
         end
     end
 
     function box:MousePress(mx, my, button)
         for _, child in ipairs(self.children) do
-            if
-                mx >= child.x
-                and mx <= child.x + child.width
-                and my >= child.y
-                and my <= child.y + child.height
-            then
-                if child:MousePress(mx, my, button) then
-                    return true
-                end
+            if contains(child, mx, my) and child:MousePress(mx, my, button) then
+                return true
             end
         end
         return false
-    end
-
-    function box:KeyPress(char)
-        for _, child in ipairs(self.children) do
-            if child.KeyPress then
-                child:KeyPress(char)
-            end
-        end
     end
 
     return box
 end
 
---------------------------------------------------------------------------------
--- Label
-
-local function MakeLabel(params)
-    local label = BaseElement(params)
+local function makeLabel(params)
+    local label = makeElement(params)
     label.text = params.text or ""
     label.fontSize = params.fontSize or 14
     label.fontColor = params.fontColor or { 1, 1, 1, 1 }
 
     function label:GetSize()
-        local textWidth = glGetTextWidth(self.text) * self.fontSize
-        local textHeight = self.fontSize
-        self.width = textWidth + 10
-        self.height = textHeight + 18
+        self.width = gl.GetTextWidth(self.text) * self.fontSize + 10
+        self.height = self.fontSize + 18
         return self.width + 2 * self.margin, self.height + 2 * self.margin
     end
 
     function label:Draw()
-        glColor(self.bgColor)
-        glRect(self.x, self.y, self.x + self.width, self.y + self.height)
-        glColor(self.fontColor)
-        glText(
-            self.text,
-            self.x + 5,
-            self.y + (self.height - self.fontSize) / 2 + 2,
-            self.fontSize,
-            ""
-        )
+        isHovered(self)
+        drawBackground(self, self.bgColor)
+        drawText(self, self.x + 5)
     end
 
     return label
 end
 
---------------------------------------------------------------------------------
--- Button
-local function lightenColor(color, factor)
-    factor = math.max(0, math.min(factor or 0.4, 1))
-
-    local r = color[1] + (1 - color[1]) * factor
-    local g = color[2] + (1 - color[2]) * factor
-    local b = color[3] + (1 - color[3]) * factor
-    local a = color[4] or 1
-
-    return { r, g, b, a }
-end
-
-local function MakeButton(params)
-    local button = MakeLabel(params)
-    button.onClick = params.onClick or function() end
-    button.hovered = false
-    function button:MousePress(mx, my)
-        if
-            mx >= self.x
-            and mx <= self.x + self.width
-            and my >= self.y
-            and my <= self.y + self.height
-        then
-            self.onClick()
-            return true
-        end
-        return false
-    end
+-- onClick(button)
+local function makeButton(params)
+    local button = makeLabel(params)
+    button.onClick = params.onClick
 
     function button:Draw()
-        if self.hovered then
-            glColor(lightenColor(self.bgColor))
-            self.hovered = false
-        else
-            glColor(self.bgColor)
-        end
-
-        glRect(self.x, self.y, self.x + self.width, self.y + self.height)
-        glColor(self.fontColor)
-        glText(
-            self.text,
-            self.x + 5,
-            self.y + (self.height - self.fontSize) / 2 + 2,
-            self.fontSize,
-            ""
-        )
+        drawBackground(self, isHovered(self) and lighten(self.bgColor, 0.4) or self.bgColor)
+        drawText(self, self.x + 5)
     end
 
-    function button:Hover(mx, my)
-        button.hovered = mx >= self.x
-            and mx <= self.x + self.width
-            and my >= self.y
-            and my <= self.y + self.height
-        if button.hovered and self.tooltip then
-            currentToolTip = self.tooltip
-        end
-        return button.hovered
+    function button:MousePress()
+        self:onClick()
+        return true
     end
 
     return button
 end
 
---------------------------------------------------------------------------------
--- Checkbox
+-- onToggle(checked)
+local function makeCheckbox(params)
+    local checkbox = makeLabel(params)
+    checkbox.checked = params.checked or false
+    checkbox.onToggle = params.onToggle
 
-local function MakeCheckbox(params)
-    local cb = MakeLabel(params)
-    cb.checked = params.checked or false
-    cb.onToggle = params.onToggle or function(_) end
-    cb.hovered = false
-
-    function cb:Draw()
-        --background
-        glColor(self.bgColor)
-        glRect(self.x, self.y, self.x + self.width, self.y + self.height)
-        --selection box
-        local boxSize = self.height * 1
-        local boxX = self.x + 5
-        local boxY = self.y + (self.height - boxSize) / 2
-        if self.hovered then
-            glColor(0.3, 0.3, 0.3, 1)
-            self.hovered = false
-        else
-            glColor(0.2, 0.2, 0.2, 1)
-        end
-
-        glRect(boxX, boxY, boxX + boxSize, boxY + boxSize)
-        if self.checked then
-            local inset = 2
-            glColor(0, 0.8, 0.1, 1)
-            glRect(boxX + inset, boxY + inset, boxX + boxSize - inset, boxY + boxSize - inset)
-        end
-        --text
-        glColor(self.fontColor)
-        glText(
-            self.text,
-            boxSize + self.x + 10,
-            self.y + (self.height - self.fontSize) / 2 + 2,
-            self.fontSize,
-            ""
-        )
-    end
-
-    function cb:GetSize()
-        local textWidth = glGetTextWidth(self.text) * self.fontSize
-        local textHeight = self.fontSize
-        self.height = textHeight + 4
-        self.width = textWidth + 10 + 20
+    function checkbox:GetSize()
+        self.width = gl.GetTextWidth(self.text) * self.fontSize + 30
+        self.height = self.fontSize + 4
         return self.width + 2 * self.margin + self.height + 10, self.height + 2 * self.margin
     end
 
-    function cb:Hover(mx, my)
-        cb.hovered = mx >= self.x
-            and mx <= self.x + self.width
-            and my >= self.y
-            and my <= self.y + self.height
-        if cb.hovered and self.tooltip then
-            currentToolTip = self.tooltip
+    function checkbox:Draw()
+        local shade = isHovered(self) and 0.3 or 0.2
+        drawBackground(self, self.bgColor)
+
+        local size = self.height
+        local x = self.x + 5
+        gl.Color(shade, shade, shade, 1)
+        gl.Rect(x, self.y, x + size, self.y + size)
+        if self.checked then
+            gl.Color(0, 0.8, 0.1, 1)
+            gl.Rect(x + 2, self.y + 2, x + size - 2, self.y + size - 2)
         end
-        return cb.hovered
+        drawText(self, x + size + 5)
     end
 
-    function cb:MousePress(mx, my)
-        if
-            mx >= self.x
-            and mx <= self.x + self.width
-            and my >= self.y
-            and my <= self.y + self.height
-        then
-            self.checked = not self.checked
-            self.onToggle(self.checked)
-            return true
-        end
-        return false
+    function checkbox:MousePress()
+        self.checked = not self.checked
+        self.onToggle(self.checked)
+        return true
     end
 
-    return cb
+    return checkbox
 end
---------------------------------------------------------------------------------
--- Selection Group
 
-local function MakeSelectionGroup(params)
-    local group = BaseElement(params)
-    group.options = params.options or {}
-    group.selected = params.selected or 1
-    group.hoveredIdx = -1
-    group.onSelect = params.onSelect or function(_) end
-    group.fontSize = params.fontSize or 14
-    group.itemBgColor = params.itemBgColor or { 0.2, 0.2, 0.2, 1 }
-    group.fontColor = params.fontColor or { 1, 1, 1, 1 }
-    group.optionTooltips = params.optionTooltips or {}
-
-    function group:GetSize()
-        local height = 0
-        local width = 0
-        for _, opt in ipairs(self.options) do
-            local w = glGetTextWidth(opt.name) * self.fontSize + 30
-            width = math.max(width, w)
-            height = height + self.fontSize + 10
-        end
-        self.width = width
-        self.height = height
-        return self.width + 2 * self.margin, self.height + 2 * self.margin
-    end
-
-    function group:Hover(mx, my)
-        if not group.optionTooltips then
-            return false
-        end
-
-        local boxSize = self.fontSize + 4
-        local spacing = 6
-        local offsetY = self.y + self.height - boxSize
-
-        for i = 1, #self.options do
-            local boxX = self.x - 2
-            local boxY = offsetY - 2
-            local text = self.options[i].name
-            local textWidth = glGetTextWidth(text) * self.fontSize + 5 + 2
-            local totalWidth = boxSize + 5 + textWidth + 2
-            local areaX2 = boxX + totalWidth
-            local areaY2 = boxY + boxSize
-
-            if
-                mx >= boxX
-                and mx <= areaX2
-                and my >= boxY
-                and my <= areaY2
-                and #group.options >= i
-            then
-                group.hoveredIdx = i
-                currentToolTip = group.options[i].tooltip
-                return true
-            end
-
-            offsetY = offsetY - (boxSize + spacing)
-        end
-        return false
-    end
-
-    function group:Draw()
-        glColor(self.bgColor)
-        glRect(self.x, self.y, self.x + self.width, self.y + self.height)
-
-        local boxSize = self.fontSize + 4
-        local spacing = 6
-        local offsetY = self.y + self.height - boxSize
-
-        for i, option in ipairs(self.options) do
-            local isSelected = (i == self.selected)
-            local boxX = self.x
-            local boxY = offsetY
-            --if differTypesByColor then
-            --  local r,g,b,a = unpack(option.color)
-            --  a = 0.8
-            --  glColor(r,g,b,a)
-            --else
-            --    glColor(0.2, 0.2, 0.2, 1)
-            --end
-            if self.hoveredIdx == i then
-                glColor(0.3, 0.3, 0.3, 1)
-                self.hoveredIdx = -1
-            else
-                glColor(0.2, 0.2, 0.2, 1)
-            end
-
-            glRect(boxX, boxY, boxX + boxSize, boxY + boxSize)
-            if isSelected then
-                glColor(0, 0.8, 0.8, 1)
-                glRect(boxX + 2, boxY + 2, boxX + boxSize - 2, boxY + boxSize - 2)
-            end
-            glColor(self.fontColor)
-            glText(
-                option.name,
-                boxX + boxSize + 5,
-                boxY + (boxSize - self.fontSize) / 2 + 2,
-                self.fontSize,
-                ""
-            )
-            offsetY = offsetY - (boxSize + spacing)
-        end
-    end
-
-    function group:MousePress(mx, my)
-        local boxSize = self.fontSize + 4
-        local spacing = 6
-        local offsetY = self.y + self.height - boxSize
-
-        for i = 1, #self.options do
-            local boxX = self.x - 2
-            local boxY = offsetY - 2
-            local text = self.options[i].name
-            local textWidth = glGetTextWidth(text) * self.fontSize + 5 + 2
-            local totalWidth = boxSize + 5 + textWidth + 2
-            local areaX2 = boxX + totalWidth
-            local areaY2 = boxY + boxSize
-
-            if mx >= boxX and mx <= areaX2 and my >= boxY and my <= areaY2 then
-                self.selected = i
-                self.onSelect(i)
-                return true
-            end
-
-            offsetY = offsetY - (boxSize + spacing)
-        end
-        return false
-    end
-
-    return group
-end
---------------------------------------------------------------------------------
--- Window
-
-local function MakeWindow(params)
-    local window = BaseElement(params)
-    window.title = params.title or "Window"
-    window.dragging = false
+-- Draggable window with a title bar button (params.titleButton = button params).
+-- Unlike other elements, x, y is its top-left corner.
+local function makeWindow(params)
+    local window = makeElement(params)
+    window.title = params.title
     window.fontSize = params.fontSize or 18
     window.fontColor = params.fontColor or { 1, 1, 1, 1 }
-    window.bgColor = params.bgColor or { 0.2, 0.2, 0.2, 0.9 }
-    window.offsetX = 0
-    window.offsetY = 0
+    window.bgColor = params.bgColor or TRANSPARENT
     window.content = params.content
+    window.dragging = false
+    window.dragOffsetX = 0
+    window.dragOffsetY = 0
 
-    local titleBarHeight = 32
-    local closeButton = MakeButton({
-        bgColor = { 0.6, 0.1, 0.0, 1.0 },
-        height = titleBarHeight - 8,
-        text = "Close Widget",
-        onClick = params.onClose,
-    })
-    window.closeButton = closeButton
+    params.titleButton.height = TITLE_BAR_HEIGHT - 8
+    local titleButton = makeButton(params.titleButton)
 
-    function window:Draw()
-        if self.closed then
-            return
-        end
-        --glColor({0,0,0,1})
-        --glRect(self.x, self.y, self.x + self.width, self.y + self.height)
-
-        -- Draw title bar
-        glColor({ 0.1, 0.1, 0.1, 1 })
-        glRect(
-            self.x,
-            self.y + self.height - titleBarHeight,
-            self.x + self.width,
-            self.y + self.height
-        )
-        glColor(unpack(self.fontColor))
-        glText(self.title, self.x + 5, self.y + self.height - titleBarHeight + 7, self.fontSize, "")
-
-        -- Position and draw close button
-        self.closeButton.x = self.x + self.width - 104
-        self.closeButton.y = self.y + self.height - titleBarHeight + 4
-        self.closeButton:Draw()
-
-        -- Position and draw content
-        if self.content then
-            self.content.x = self.x
-            self.content.y = self.y - titleBarHeight
-            -- self.content.width = self.width
-            -- self.content.height = self.height - titleBarHeight
-            self.content:Draw()
-        end
-
-        if currentToolTip then
-            local mx, my = Spring.GetMouseState()
-            my = my + 6
-
-            local tooltipFontSize = 16
-            local lineSpacing = 4
-            local padding = 6
-            local border = 2
-
-            -- Split text into lines
-            local lines = {}
-            for line in currentToolTip:gmatch("[^\n]+") do
-                table.insert(lines, line)
-            end
-
-            -- Measure width and height
-            local maxLineWidth = 0
-            for _, line in ipairs(lines) do
-                local lineWidth = glGetTextWidth(line) * tooltipFontSize
-                maxLineWidth = math.max(maxLineWidth, lineWidth)
-            end
-
-            local tooltipWidth = maxLineWidth + 2 * padding
-            local tooltipHeight = (#lines * (tooltipFontSize + lineSpacing))
-                - lineSpacing
-                + 2 * padding
-
-            -- Draw background box
-            glColor(0.9, 0.5, 0.1, 0.9)
-            glRect(
-                mx - border,
-                my - border - 4,
-                mx + tooltipWidth + border,
-                my + tooltipHeight + border
-            )
-
-            -- Draw text
-            glColor(1, 1, 1, 1)
-            local textY = my + tooltipHeight - padding - tooltipFontSize
-            for _, line in ipairs(lines) do
-                glText(line, mx + padding, textY, tooltipFontSize, "")
-                textY = textY - (tooltipFontSize + lineSpacing)
-            end
-        end
-
+    -- Grows with the content, but doesn't shrink when the content is swapped
+    function window:GetSize()
         local cw, ch = self.content:GetSize()
-        self.width = cw
-        self.height = ch
+        self.width = math.max(self.width, cw)
+        self.height = TITLE_BAR_HEIGHT + self.padding + ch
+        return self.width, self.height
     end
 
-    function window:Hover(mx, my)
-        if closeButton:Hover(mx, my) then
-            return
-        end
-        self.content:Hover(mx, my)
+    function window:Draw()
+        self:GetSize()
+        local vsx, vsy = gl.GetViewSizes()
+        -- keep the title bar on screen
+        self.x = math.max(0, math.min(self.x, vsx - self.width))
+        self.y = math.max(TITLE_BAR_HEIGHT, math.min(self.y, vsy))
+        local right = self.x + self.width
+        currentTooltip = nil
+
+        gl.Color(self.bgColor)
+        gl.Rect(self.x, self.y - self.height, right, self.y)
+        gl.Color(0.1, 0.1, 0.1, 1)
+        gl.Rect(self.x, self.y - TITLE_BAR_HEIGHT, right, self.y)
+        gl.Color(self.fontColor)
+        gl.Text(self.title, self.x + 5, self.y - TITLE_BAR_HEIGHT + 7, self.fontSize, "")
+
+        titleButton.x = right - titleButton.width - 4
+        titleButton.y = self.y - TITLE_BAR_HEIGHT + 4
+        titleButton:Draw()
+
+        self.content.x = self.x
+        self.content.y = self.y - self.height
+        self.content:Draw()
+
+        drawTooltip()
     end
 
     function window:MousePress(mx, my, button)
-        if self.closeButton:MousePress(mx, my) then
-            return true
-        elseif
-            mx >= self.x
+        if contains(titleButton, mx, my) then
+            return titleButton:MousePress()
+        end
+        local onTitleBar = mx >= self.x
             and mx <= self.x + self.width
-            and my >= self.y + self.height - titleBarHeight
-            and my <= self.y + self.height
-        then
+            and my <= self.y
+            and my >= self.y - TITLE_BAR_HEIGHT
+        if onTitleBar then
             self.dragging = true
-            self.offsetX = mx - self.x
-            self.offsetY = my - self.y
-            return true
-        elseif self.content and self.content:MousePress(mx, my, button) then
+            self.dragOffsetX = mx - self.x
+            self.dragOffsetY = my - self.y
             return true
         end
-        return false
+        return self.content:MousePress(mx, my, button)
     end
 
     function window:MouseMove(mx, my)
         if self.dragging then
-            self.x = mx - self.offsetX
-            self.y = my - self.offsetY
+            self.x = mx - self.dragOffsetX
+            self.y = my - self.dragOffsetY
         end
     end
 
@@ -1621,190 +1343,74 @@ local function MakeWindow(params)
     return window
 end
 
--------------------------------------------------------------------------------------
+-- Radio buttons; params.options = {{name, tooltip}}, onSelect(index)
+local function makeSelectionGroup(params)
+    local group = makeElement(params)
+    group.options = params.options
+    group.selected = 1
+    group.onSelect = params.onSelect
+    group.fontSize = params.fontSize or 14
+    group.fontColor = { 1, 1, 1, 1 }
+    local boxSize = group.fontSize + 4
+    local rowHeight = boxSize + 6
 
-function widget:Initialize()
-    LoadUserPreferences()
-
-    if slots < 0 then
-        Spring.Echo("[LayoutPlanner] Slot amount cannot be negative")
-        DisableWidget()
-        return
-    end
-    if slotsPerRow < 1 then
-        Spring.Echo("[LayoutPlanner] Slots per row must be greater than 0")
-        DisableWidget()
-        return
-    end
-
-    local drawBox = Box({ orientation = "horizontal", spacing = 6, padding = 4 })
-
-    drawBox:Add(MakeCheckbox({
-        text = "Enable Layout Draw",
-        tooltip = "Allow placing of buildings (LMB) and lines (RMB)",
-        checked = drawingMode,
-        fontSize = 16,
-        onToggle = function(state)
-            drawingMode = state
-            Spring.Echo("[LayoutPlanner] Drawing: " .. (drawingMode and "ON" or "OFF"))
-        end,
-    }))
-
-    drawBox:Add(MakeCheckbox({
-        text = "Snap",
-        checked = snapBuilding,
-        tooltip = "Snap the building to the grid according to the selected size",
-        fontSize = 16,
-        onToggle = function(state)
-            snapBuilding = state
-            Spring.Echo("[LayoutPlanner] Snap: " .. (snapBuilding and "ON" or "OFF"))
-        end,
-    }))
-
-    --Building sizes
-    drawBox:Add(MakeSelectionGroup({
-        options = buildingTypes,
-        fontSize = 16,
-        onSelect = function(i)
-            Spring.Echo("[LayoutPlanner] Current Size: " .. i)
-            currentSizeIndex = i
-        end,
-    }))
-
-    local layoutButtons = Box({ orientation = "horizontal", spacing = 6, padding = 4 })
-    layoutButtons:Add(MakeButton({
-        text = "Clear Layout",
-        tooltip = "Removes all buildings and lines from the current layout",
-        bgColor = { 0.8, 0.4, 0.1, 1.0 },
-        fontSize = 20,
-        onClick = function()
-            ClearLayout(currentLayout)
-        end,
-    }))
-    layoutButtons:Add(MakeButton({
-        text = "Render",
-        tooltip = "Render all buildings and lines of the current layout as line marks in the game world",
-        fontSize = 20,
-        bgColor = { 0.0, 0.2, 0.8, 1.0 },
-        onClick = function()
-            CollectAndDraw()
-        end,
-    }))
-
-    local content = Box({
-        bgColor = { 0.15, 0.15, 0.15, 1 },
-        orientation = "vertical",
-        spacing = 6,
-        padding = 4,
-    })
-    content:Add(drawBox)
-
-    local shiftAndGridBox = Box({ orientation = "horizontal", spacing = 6, padding = 4 })
-    content:Add(shiftAndGridBox)
-    shiftAndGridBox:Add(MakeCheckbox({
-        text = "Shift Layout",
-        checked = allowTranslationByKeys,
-        tooltip = "Whether the active layout can be shifted using the keyboard WASD keys",
-        fontSize = 16,
-        onToggle = function(state)
-            allowTranslationByKeys = state
-            Spring.Echo("[LayoutPlanner] Shift: " .. (allowTranslationByKeys and "ON" or "OFF"))
-        end,
-    }))
-    shiftAndGridBox:Add(MakeCheckbox({
-        text = "Draw Chunk Grid",
-        checked = drawChunkGrid,
-        tooltip = "Display a chunk aligned grid around mouse",
-        fontSize = 16,
-        onToggle = function(state)
-            drawChunkGrid = state
-            Spring.Echo("[LayoutPlanner] Draw chunk grid: " .. (drawChunkGrid and "ON" or "OFF"))
-        end,
-    }))
-
-    local hintsBox = Box({ orientation = "horizontal", spacing = 6, padding = 4 })
-    content:Add(hintsBox)
-    hintsBox:Add(MakeCheckbox({
-        text = "Colored types",
-        checked = differTypesByColor,
-        tooltip = "Display each unit type with different colors",
-        fontSize = 16,
-        onToggle = function(state)
-            differTypesByColor = state
-            Spring.Echo(
-                "[LayoutPlanner] Different colors: " .. (differTypesByColor and "ON" or "OFF")
-            )
-        end,
-    }))
-    hintsBox:Add(MakeCheckbox({
-        text = "Display Text Hints",
-        checked = showUsageTips,
-        tooltip = "Display text usage hints on the screen",
-        fontSize = 16,
-        onToggle = function(state)
-            showUsageTips = state
-            Spring.Echo("[LayoutPlanner] Usage hints: " .. (showUsageTips and "ON" or "OFF"))
-        end,
-    }))
-    content:Add(layoutButtons)
-    content:Add(MakeButton({
-        text = "Auto Erase Reminder",
-        fontSize = 20,
-        bgColor = { 0.0, 0.2, 0.1, 1.0 },
-        tooltip = "Send a message about how to disable auto erase. New players on your lobby might need to know this. :)",
-        onClick = function()
-            Spring.SendCommands({
-                'say Go to Settings -> Interface, turn off "Auto Erase Map Marks" so you never lose the layout lines again :)',
-            })
-        end,
-    }))
-
-    content:Add(MakeLabel({ bgColor = { 0, 0, 0, 0 }, text = "Layout Slots:", fontSize = 14 }))
-
-    local rows = math.ceil(slots / slotsPerRow)
-
-    for h = 0, rows - 1 do
-        local row = Box({ orientation = "horizontal", spacing = 13, padding = 4 })
-
-        for i = 1, slotsPerRow do
-            local slotId = h * slotsPerRow + i
-            if slotId > slots then
-                break
-            end
-
-            local slotName = slotId < 10 and "0" .. tostring(slotId) or tostring(slotId)
-
-            local slot = Box({
-                orientation = "vertical",
-                spacing = 6,
-                padding = 4,
-                bgColor = { 0.0, 0.0, 0, 1 },
-            })
-            slot:Add(MakeButton({
-                text = "Save " .. slotName,
-                bgColor = { 0.15, 0.6, 0.25, 1.0 },
-                onClick = function()
-                    SaveLayout(slotId)
-                end,
-            }))
-            slot:Add(MakeButton({
-                text = "Load " .. slotName,
-                bgColor = { 0.3, 0.4, 1, 1.0 },
-                onClick = function()
-                    LoadLayout(slotId)
-                end,
-            }))
-            row:Add(slot)
+    function group:GetSize()
+        self.width = 0
+        for _, option in ipairs(self.options) do
+            self.width = math.max(self.width, gl.GetTextWidth(option.name) * self.fontSize + 30)
         end
-
-        content:Add(row)
+        self.height = #self.options * rowHeight
+        return self.width + 2 * self.margin, self.height + 2 * self.margin
     end
 
-    content:Add(MakeLabel({
-        bgColor = { 0.45, 0.16, 0.025, 1.0 },
-        text = "DON'T PANIC!",
-        fontSize = 14,
-        tooltip = [[
+    -- Option row i, as an element for the hit tests and drawText()
+    local function optionRow(self, i)
+        local option = self.options[i]
+        return {
+            x = self.x,
+            y = self.y + self.height - boxSize - (i - 1) * rowHeight,
+            width = self.width,
+            height = boxSize,
+            tooltip = option.tooltip,
+            text = option.name,
+            fontSize = self.fontSize,
+            fontColor = self.fontColor,
+        }
+    end
+
+    function group:Draw()
+        drawBackground(self, self.bgColor)
+        for i = 1, #self.options do
+            local row = optionRow(self, i)
+            local shade = isHovered(row) and 0.3 or 0.2
+            gl.Color(shade, shade, shade, 1)
+            gl.Rect(row.x, row.y, row.x + boxSize, row.y + boxSize)
+            if i == self.selected then
+                gl.Color(0, 0.8, 0.8, 1)
+                gl.Rect(row.x + 2, row.y + 2, row.x + boxSize - 2, row.y + boxSize - 2)
+            end
+            drawText(row, row.x + boxSize + 5)
+        end
+    end
+
+    function group:MousePress(mx, my)
+        for i = 1, #self.options do
+            if contains(optionRow(self, i), mx, my) then
+                self.selected = i
+                self.onSelect(i)
+                return true
+            end
+        end
+        return false
+    end
+
+    return group
+end
+
+-- UI
+-- ========================================
+
+local HELP_TEXT = [[
 DON'T PANIC!
     To draw your layout, first click on "Enable Layout Draw". You will see a square at your mouse position; it is a preview of where you will draw to the layout. The small dot is where a line will begin.
     Use [left mouse button] to place buildings, use [ALT] or [ALT + CTRL] keys to change the way it is placed.
@@ -1821,96 +1427,191 @@ IF YOUR ARE NEW:
     Draw your layout alligned to chunks. The size of a chunk is a multiple of almost every building in the game! You can optimize your layout space based on this.
     Use the "Snap" option! Its the best way to render regular layouts, which will be alligned to the grid.
 
-Check and use the widget discord page if you have any trouble with this widget.]],
+Check and use the widget discord page if you have any trouble with this widget.]]
+
+-- Checkbox for a boolean pref
+local function makePrefToggle(text, tooltip, key)
+    return makeCheckbox({
+        text = text,
+        tooltip = tooltip,
+        checked = prefs[key],
+        fontSize = 16,
+        onToggle = function(checked)
+            prefs[key] = checked
+            log(text .. ": " .. (checked and "ON" or "OFF"))
+        end,
+    })
+end
+
+local function makeSlotRows(content)
+    for first = 1, prefs.slots, prefs.slotsPerRow do
+        local row = makeBox({ orientation = "horizontal", spacing = 13 })
+        for slot = first, math.min(first + prefs.slotsPerRow - 1, prefs.slots) do
+            local name = string.format("%02d", slot)
+            local slotBox = makeBox({ spacing = 6, bgColor = { 0, 0, 0, 1 } })
+            slotBox:Add(makeButton({
+                text = "Save " .. name,
+                bgColor = { 0.15, 0.6, 0.25, 1.0 },
+                onClick = function()
+                    saveLayout(slot, currentLayout)
+                end,
+            }))
+            slotBox:Add(makeButton({
+                text = "Load " .. name,
+                bgColor = { 0.3, 0.4, 1, 1.0 },
+                onClick = function()
+                    loadLayout(slot)
+                end,
+            }))
+            row:Add(slotBox)
+        end
+        content:Add(row)
+    end
+end
+
+local function createUI()
+    local drawBox = makeBox({ orientation = "horizontal", spacing = 6 })
+    drawBox:Add(makeCheckbox({
+        text = "Enable Layout Draw",
+        tooltip = "Allow placing of buildings (LMB) and lines (RMB)",
+        checked = drawingMode,
+        fontSize = 16,
+        onToggle = function(checked)
+            drawingMode = checked
+            log("Drawing: " .. (checked and "ON" or "OFF"))
+        end,
+    }))
+    drawBox:Add(
+        makePrefToggle(
+            "Snap",
+            "Snap the building to the grid according to the selected size",
+            "snapBuilding"
+        )
+    )
+    drawBox:Add(makeSelectionGroup({
+        options = BUILDING_TYPES,
+        fontSize = 16,
+        onSelect = function(i)
+            currentSizeIndex = i
+        end,
     }))
 
-    myUI = MakeWindow({
+    local shiftAndGridBox = makeBox({ orientation = "horizontal", spacing = 6 })
+    shiftAndGridBox:Add(
+        makePrefToggle(
+            "Shift Layout",
+            "Whether the active layout can be shifted using the keyboard WASD keys",
+            "allowTranslationByKeys"
+        )
+    )
+    shiftAndGridBox:Add(
+        makePrefToggle(
+            "Draw Chunk Grid",
+            "Display a chunk aligned grid around mouse",
+            "drawChunkGrid"
+        )
+    )
+
+    local hintsBox = makeBox({ orientation = "horizontal", spacing = 6 })
+    hintsBox:Add(
+        makePrefToggle(
+            "Colored types",
+            "Display each unit type with different colors",
+            "differTypesByColor"
+        )
+    )
+    hintsBox:Add(
+        makePrefToggle(
+            "Display Text Hints",
+            "Display text usage hints on the screen",
+            "showUsageTips"
+        )
+    )
+
+    local layoutButtons = makeBox({ orientation = "horizontal", spacing = 6 })
+    layoutButtons:Add(makeButton({
+        text = "Clear Layout",
+        tooltip = "Removes all buildings and lines from the current layout",
+        bgColor = { 0.8, 0.4, 0.1, 1.0 },
+        fontSize = 20,
+        onClick = function()
+            local command = {}
+            pushClearLayout(command, currentLayout)
+            runCommand(command)
+        end,
+    }))
+    layoutButtons:Add(makeButton({
+        text = "Render",
+        tooltip = "Render all buildings and lines of the current layout as line marks in the game world",
+        bgColor = { 0.0, 0.2, 0.8, 1.0 },
+        fontSize = 20,
+        onClick = renderLayout,
+    }))
+
+    local content = makeBox({ bgColor = { 0.15, 0.15, 0.15, 1 }, spacing = 6 })
+    content:Add(drawBox)
+    content:Add(shiftAndGridBox)
+    content:Add(hintsBox)
+    content:Add(layoutButtons)
+    content:Add(makeButton({
+        text = "Auto Erase Reminder",
+        tooltip = "Send a message about how to disable auto erase. New players on your lobby might need to know this. :)",
+        bgColor = { 0.0, 0.2, 0.1, 1.0 },
+        fontSize = 20,
+        onClick = function()
+            Spring.SendCommands({
+                'say Go to Settings -> Interface, turn off "Auto Erase Map Marks" so you never lose the layout lines again :)',
+            })
+        end,
+    }))
+    content:Add(makeLabel({ text = "Layout Slots:", fontSize = 14, bgColor = TRANSPARENT }))
+    makeSlotRows(content)
+    content:Add(makeLabel({
+        text = "DON'T PANIC!",
+        tooltip = HELP_TEXT,
+        fontSize = 14,
+        bgColor = { 0.45, 0.16, 0.025, 1.0 },
+    }))
+
+    myUI = makeWindow({
         title = "Layout Planner",
         fontSize = 22,
         fontColor = { 1, 0.6, 0.0, 1.0 },
         content = content,
-        onClose = DisableWidget,
+        titleButton = {
+            text = "Close Widget",
+            bgColor = { 0.6, 0.1, 0.0, 1.0 },
+            onClick = function()
+                widgetHandler:RemoveWidget()
+            end,
+        },
     })
     local _, vsy = gl.GetViewSizes()
-    local _, h = myUI:GetSize()
-    myUI.x, myUI.y = windowX or 50, windowY or vsy / 2 - h - 300
+    local _, contentHeight = content:GetSize()
+    myUI.x = prefs.windowX or 50
+    myUI.y = prefs.windowY or vsy / 2 - 330 + contentHeight
 end
 
---------------------------------------------------------------------------------
--- Drawing and Input
+-- Widget callins
+-- ========================================
 
-function widget:DrawScreen()
-    if myUI then
-        myUI:Draw()
-    end
-
-    if not showUsageTips then
+function widget:Initialize()
+    loadPreferences()
+    if prefs.slots < 0 or prefs.slotsPerRow < 1 then
+        log("ERROR - slots can't be negative and slotsPerRow must be at least 1")
+        widgetHandler:RemoveWidget()
         return
     end
+    createUI()
+end
 
-    local vsx, vsy = gl.GetViewSizes()
-    local textWidth = 19 * 18
-    vsy = vsy * 0.4
-
-    -- Placement hint text
-    if loadedData and loadedData.layout then
-        gl.Color(1, 1, 0.5, 1)
-        gl.Text("Press [R] to rotate", (vsx - textWidth) / 2, vsy, 18, "o")
-        gl.Text("Press [I] to invert", (vsx - textWidth) / 2, vsy - 20, 18, "o")
-        gl.Text(
-            "Hold [ALT] while placing to merge with current layout.",
-            (vsx - textWidth) / 2,
-            vsy - 40,
-            18,
-            "o"
-        )
-        vsy = vsy - 60
-    elseif drawingMode then --Drawing
-        gl.Color(1, 1, 0.5, 1)
-        gl.Text(
-            "Use [left mouse button] to place buildings. Hold [ALT] to place in area",
-            (vsx - textWidth) / 2,
-            vsy,
-            18,
-            "o"
-        )
-        gl.Text(
-            "Use [right mouse button] to place lines. Hold [ALT] to remove crossed lines",
-            (vsx - textWidth) / 2,
-            vsy - 20,
-            18,
-            "o"
-        )
-        gl.Text(
-            "Use [left mouse button] + [CTRL] + [ALT] to draw traced lines instead of area. (The amount of traces is based on the building Size)",
-            (vsx - textWidth) / 2,
-            vsy - 40,
-            18,
-            "o"
-        )
-        vsy = vsy - 60
-    end
-    if allowTranslationByKeys then --Translation
-        gl.Color(1, 1, 0.5, 1)
-        gl.Text("Translate layout using [W][A][S][D] keys", (vsx - textWidth) / 2, vsy, 18, "o")
-        vsy = vsy - 20
-    end
-
-    if #commandHistory > 0 and historyPointer > 0 then
-        gl.Text("Undo last action with [CTRL]+[Z]", (vsx - textWidth) / 2, vsy, 18, "o")
-        vsy = vsy - 20
-    end
-    if historyPointer < #commandHistory then
-        gl.Text("Redo next action with [CTRL]+[A]", (vsx - textWidth) / 2, vsy, 18, "o")
-        vsy = vsy - 20
-    end
+function widget:Shutdown()
+    savePreferences()
 end
 
 function widget:MousePress(mx, my, button)
-    --1 left
-    --3 right
     if button == 1 then
-        if myUI and myUI:MousePress(mx, my, button) then
+        if myUI:MousePress(mx, my, button) then
             return true
         end
         if lineStart then
@@ -1918,50 +1619,21 @@ function widget:MousePress(mx, my, button)
             return true
         end
 
-        local _, pos = Spring.TraceScreenRay(mx, my, true)
+        local pos = traceGround(mx, my)
         if not pos then
             return false
         end
-
-        local bx, bz = WorldToBU(pos[1], pos[3])
-        local size = buildingTypes[currentSizeIndex].size
-
-        if loadedData and loadedData.layout then
-            if not altMode then
-                local shiftX = math.floor((loadedData.width + loadedData.minSize) / 2)
-                local shiftZ = math.floor((loadedData.height + loadedData.minSize) / 2)
-                TranslateLayout(loadedData.layout, bx - shiftX, bz - shiftZ)
-                local cmd = CreateCommand()
-                ClearLayoutActions(cmd, currentLayout)
-                MakeLayoutActions(cmd, loadedData.layout)
-                --currentLayout = loadedData.layout
-                RunCommand(cmd)
-                loadedData = nil
-            else
-                local copy = CopyLayout(loadedData.layout)
-                local shiftX = math.floor((loadedData.width + loadedData.minSize) / 2)
-                local shiftZ = math.floor((loadedData.height + loadedData.minSize) / 2)
-                TranslateLayout(copy, bx - shiftX, bz - shiftZ)
-
-                local cmd = CreateCommand()
-                MakeLayoutActions(cmd, copy)
-                --currentLayout = loadedData.layout
-                RunCommand(cmd)
-            end
-
-            Spring.Echo("[LayoutPlanner] Layout placed.")
+        local bx, bz = buildingAnchor(pos)
+        if loadedData then
+            local alt = Spring.GetModKeyState()
+            placeLoadedLayout(loadedData, bx, bz, alt)
             return true
         elseif drawingMode then
-            if snapBuilding then
-                bx = math.floor(bx / size) * size
-                bz = math.floor(bz / size) * size
-            end
-            dragging = true
+            local size = BUILDING_TYPES[currentSizeIndex].size
+            bx, bz = snapToSize(bx, bz, size)
             dragStart = { bx = bx, bz = bz, size = size }
             return true
         end
-
-        return false
     elseif button == 3 and loadedData then
         loadedData = nil
         return true
@@ -1970,631 +1642,138 @@ function widget:MousePress(mx, my, button)
             dragStart = nil
             return true
         end
-
-        local _, pos = Spring.TraceScreenRay(mx, my, true)
+        local pos = traceGround(mx, my)
         if not pos then
             return false
         end
-        local bx, bz = WorldToBU(pos[1] + HALF_BU, pos[3] + HALF_BU)
+        local bx, bz = lineAnchor(pos)
         lineStart = { bx = bx, bz = bz }
         return true
     end
     return false
 end
 
-local function GetBuildingList(dragStart, rx, rz, altMode)
-    local results = {}
-    local bx, bz = dragStart.bx, dragStart.bz
-    local ex, ez = rx, rz
-    local size = dragStart.size
-
-    if altMode then
-        local minX, maxX = math.min(bx, ex), math.max(bx, ex)
-        local minZ, maxZ = math.min(bz, ez), math.max(bz, ez)
-
-        for x = minX, maxX, size do
-            for z = minZ, maxZ, size do
-                results[#results + 1] = { x = x, z = z }
-            end
-        end
-        return results
-    end
-
-    local dx = math.abs(ex - bx)
-    local dz = math.abs(ez - bz)
-
-    local sx = (ex >= bx) and size or -size
-    local sz = (ez >= bz) and size or -size
-
-    local x = bx
-    local z = bz
-
-    if dx > dz then
-        local err = dx / 2
-        while (sx > 0 and x <= ex) or (sx < 0 and x >= ex) do
-            results[#results + 1] = { x = x, z = z }
-
-            x = x + sx
-            err = err - dz
-            if err < 0 then
-                z = z + sz
-                err = err + dx
-            end
-        end
-    else
-        local err = dz / 2
-        while (sz > 0 and z <= ez) or (sz < 0 and z >= ez) do
-            results[#results + 1] = { x = x, z = z }
-
-            z = z + sz
-            err = err - dx
-            if err < 0 then
-                x = x + sx
-                err = err + dz
-            end
-        end
-    end
-
-    return results
-end
-
-local function TraceRectangleBounds(startPos, endPos)
-    local size = startPos.size or 1
-    local TICK = size > 4 and 1 or 0.5
-    local CORNER_TICK_LEN = TICK * 2
-
-    local bx1, bz1 = startPos.bx, startPos.bz
-    local bx2, bz2 = endPos.bx, endPos.bz
-
-    -- Calculate actual footprint of the dragged shape
-    local sx1 = bx1
-    local sz1 = bz1
-    local sx2 = bx2
-    local sz2 = bz2
-
-    -- Get the final bounding box including both the shape and the cursor
-    local xMin = math.min(sx1, sx2, bx2)
-    local xMax = math.max(sx1, sx2, bx2) + size
-    local zMin = math.min(sz1, sz2, bz2)
-    local zMax = math.max(sz1, sz2, bz2) + size
-
-    -- Shrink bounds inward by 1 BU
-    local x1 = xMin + 1
-    local x2 = xMax - 1
-    local z1 = zMin + 1
-    local z2 = zMax - 1
-
-    local lines = {}
-    local function Add(x1, z1, x2, z2)
-        table.insert(lines, { x1, z1, x2, z2 })
-    end
-
-    -- Corner ticks
-    Add(x1, z1, x1 + CORNER_TICK_LEN, z1)
-    Add(x1, z1, x1, z1 + CORNER_TICK_LEN)
-    Add(x2, z1, x2 - CORNER_TICK_LEN, z1)
-    Add(x2, z1, x2, z1 + CORNER_TICK_LEN)
-    Add(x2, z2, x2 - CORNER_TICK_LEN, z2)
-    Add(x2, z2, x2, z2 - CORNER_TICK_LEN)
-    Add(x1, z2, x1 + CORNER_TICK_LEN, z2)
-    Add(x1, z2, x1, z2 - CORNER_TICK_LEN)
-
-    -- Horizontal ticks (top and bottom) → left-right ticks
-    for x = x1 + size - 1, x2 - 1, size do
-        Add(x - TICK, z1, x + TICK, z1) -- top edge
-        Add(x - TICK, z2, x + TICK, z2) -- bottom edge
-    end
-
-    -- Vertical ticks (left and right) → up-down ticks
-    for z = z1 + size - 1, z2 - 1, size do
-        Add(x1, z - TICK, x1, z + TICK) -- left edge
-        Add(x2, z - TICK, x2, z + TICK) -- right edge
-    end
-
-    return lines
+function widget:MouseMove(mx, my)
+    myUI:MouseMove(mx, my)
 end
 
 function widget:MouseRelease(mx, my, button)
+    local pos = traceGround(mx, my)
     if button == 1 then
-        if myUI and myUI:MouseRelease(mx, my, button) then
-            return true
-        end
-
-        if not dragging or not dragStart then
-            return
-        end
-
-        local _, pos = Spring.TraceScreenRay(mx, my, true)
-        if not pos then
-            return
-        end
-
-        if dragging and dragStart then
-            local bx, bz = WorldToBU(pos[1], pos[3])
-            local size = dragStart.size
-
-            if snapBuilding then
-                bx = math.floor(bx / size) * size
-                bz = math.floor(bz / size) * size
-            end
-
-            if ctrlMode and altMode then
-                --RENDER STUFF WITH TRACED BOUNDS
-                --local bounds = TraceRectangleBounds(dragStart, {bx = bx, bz = bz})
-                --for _, line in ipairs(bounds) do
-                --  AddLine(unpack(line))
-                --end
-
-                local linesToAdd = TraceRectangleBounds(dragStart, { bx = bx, bz = bz })
-                local cmd = CreateCommand()
-                for _, line in ipairs(linesToAdd) do
-                    PushAddLineAction(cmd, currentLayout, unpack(line))
-                end
-                RunCommand(cmd)
-
-            --Spring.Echo("Traced Bounds")
-            else
-                --RENDER STUFF WITH BUILDINGS
-                --local list = GetBuildingList(dragStart, bx, bz, altMode)
-                --for _, v in ipairs(list) do
-                --  ToggleBuilding(v.x, v.z, size)
-                --end
-
-                -- TOGGLE BUILDINGS
-                local cmd = CreateCommand()
-                local list = GetBuildingList(dragStart, bx, bz, altMode)
-
-                for _, v in ipairs(list) do
-                    local found = false
-                    local group = currentLayout.buildings[size]
-
-                    for _, pos in ipairs(group) do
-                        if pos[1] == v.x and pos[2] == v.z then
-                            PushRemBuildingAction(cmd, currentLayout, v.x, v.z, size)
-                            found = true
-                            break
-                        end
-                    end
-
-                    if not found then
-                        PushAddBuildingAction(cmd, currentLayout, v.x, v.z, size)
-                    end
-                end
-                RunCommand(cmd)
-            end
-        end
-        dragging = false
+        myUI:MouseRelease()
+        local start = dragStart
         dragStart = nil
+        if start and pos then
+            local bx, bz = buildingAnchor(pos)
+            finishBuildingDrag(start, snapToSize(bx, bz, start.size))
+        end
     elseif button == 3 and lineStart then
-        local _, pos = Spring.TraceScreenRay(mx, my, true)
-        if not pos then
-            lineStart = nil
-            return
-        end
-        local ex, ez = WorldToBU(pos[1] + HALF_BU, pos[3] + HALF_BU)
-
-        if altMode then
-            local linesToRemoveIndices =
-                GetIntersectingLineIndices(currentLayout, { lineStart.bx, lineStart.bz, ex, ez })
-
-            local cmd = CreateCommand()
-            for _, lineIndex in ipairs(linesToRemoveIndices) do
-                local line = currentLayout.lines[lineIndex]
-                PushRemLineAction(cmd, currentLayout, unpack(line))
-            end
-            RunCommand(cmd)
-        else
-            local cmd = CreateCommand()
-            PushAddLineAction(cmd, currentLayout, lineStart.bx, lineStart.bz, ex, ez)
-            RunCommand(cmd)
-            --AddLine(lineStart.bx, lineStart.bz, ex, ez)
-        end
+        local start = lineStart
         lineStart = nil
+        if pos then
+            finishLineDrag(start, lineAnchor(pos))
+        end
     end
 end
 
-function widget:MouseMove(x, y)
-    if myUI then
-        return myUI:MouseMove(x, y)
+function widget:KeyPress(key, mods)
+    if mods.ctrl and key == KEY_UNDO then
+        undo()
+        return true
     end
-end
-
-function GetCameraSnappedAngle()
-    local dirX, _, dirZ = Spring.GetCameraDirection()
-    local camLen = math.sqrt(dirX * dirX + dirZ * dirZ)
-
-    if camLen < 0.0001 then
-        Spring.Echo("Camera facing straight down — direction is ambiguous")
-        return 0
-    end
-
-    -- Normalize camera direction in XZ plane
-    local forwardX = dirX / camLen
-    local forwardZ = dirZ / camLen
-
-    -- Snap to nearest integer step
-    local tx = math.floor(forwardX + 0.5)
-    local tz = math.floor(forwardZ + 0.5)
-
-    -- Determine cardinal angle
-    local angle
-    if tx == 0 and tz > 0 then
-        angle = 270 -- forward
-    elseif tx > 0 and tz == 0 then
-        angle = 180 -- right
-    elseif tx == 0 and tz < 0 then
-        angle = 90 -- backward
-    elseif tx < 0 and tz == 0 then
-        angle = 0 -- left
-    else
-        angle = 0 -- ambiguous or diagonal
-    end
-
-    return angle
-end
-
--- Transforms input vector (dx, dz) based on camera, snaps to grid, and returns direction and angle
-function GetSnappedCameraDirection(dx, dz)
-    if dx == 0 and dz == 0 then
-        return 0, 0, nil -- no input
-    end
-
-    local inputLen = math.sqrt(dx * dx + dz * dz)
-    dx = dx / inputLen
-    dz = dz / inputLen
-
-    local dirX, _, dirZ = Spring.GetCameraDirection()
-    local camLen = math.sqrt(dirX * dirX + dirZ * dirZ)
-    if camLen < 0.0001 then
-        Spring.Echo("Camera facing straight down — input transform is ambiguous")
-        return 0, 0, nil
-    end
-
-    local forwardX = dirX / camLen
-    local forwardZ = dirZ / camLen
-    local rightX = -forwardZ
-    local rightZ = forwardX
-
-    local worldDX = dx * rightX + dz * forwardX
-    local worldDZ = dx * rightZ + dz * forwardZ
-
-    local tx = math.floor(worldDX + 0.5)
-    local tz = math.floor(worldDZ + 0.5)
-
-    return tx, tz
-end
-
-function widget:KeyPress(key)
-    --a 97
-    --s 115
-    --w 119
-    --d 100
-    --ALT 308
-    --up 273
-    --down 274
-    --left 276
-    --right 275
-
-    --z 122
-    --a 97
-    if key == 308 then -- ALT
-        altMode = true
-        return false
-    end
-
-    if key == 306 then
-        ctrlMode = true
-        return false
-    end
-
-    if key == 122 and ctrlMode then -- CTRL + Z
-        Undo()
+    if mods.ctrl and key == KEY_REDO then
+        redo()
         return true
     end
 
-    if key == 97 and ctrlMode then -- CTRL + A
-        Redo()
+    if loadedData and key == KEY_ROTATE then
+        layoutRotation = (layoutRotation + 90) % 360
+        rotateAndInvert(loadedData.layout, 90, false)
+        log("rotation: " .. layoutRotation)
+        return true
+    end
+    if loadedData and key == KEY_INVERT then
+        rotateAndInvert(loadedData.layout, 0, true)
+        log("layout inverted")
         return true
     end
 
-    --Spring.Echo("Key ".. tostring(key))
-    if loadedData and loadedData.layout then
-        if key == string.byte("r") then
-            layoutRotation = (layoutRotation + 90) % 360
-            ApplyRotationAndInversion(loadedData.layout, 90, false)
-            Spring.Echo("[LayoutPlanner] Rotation:", layoutRotation)
-            return true
-        end
-        if key == string.byte("i") then
-            ApplyRotationAndInversion(loadedData.layout, 0, true)
-            Spring.Echo("[LayoutPlanner] Layout Inverted")
-            return true
-        end
-    end
-
-    if allowTranslationByKeys and currentLayout then
-        --translation in world space
-        local dx, dz = 0, 0
-
-        if key == 119 then
-            dz = dz + 1
-        end -- W
-        if key == 115 then
-            dz = dz - 1
-        end -- S
-        if key == 97 then
-            dx = dx - 1
-        end -- A
-        if key == 100 then
-            dx = dx + 1
-        end -- D
-
+    local direction = prefs.allowTranslationByKeys and TRANSLATE_KEYS[key]
+    if direction then
+        local dx, dz = getSnappedCameraDirection(direction[1], direction[2])
         if dx ~= 0 or dz ~= 0 then
-            -- d = input as input vector
-            -- get camera basis vector in XZ plane
-            -- transfrom "d" to camera space
-            local tx, tz = GetSnappedCameraDirection(dx, dz)
-
-            if tx ~= 0 or tz ~= 0 then
-                local cmd = CreateCommand()
-                PushTranslateAction(cmd, currentLayout, tx, tz)
-                RunCommand(cmd)
-            end
+            local command = {}
+            pushEdit(command, "translate", currentLayout, dx, dz)
+            runCommand(command)
         end
     end
+    return false
 end
 
-function widget:KeyRelease(key)
-    if key == 308 then --ALT
-        altMode = false
-        return false --hmm, true seems to block the ALT key reach the game, so we can't rotate camera lol
+-- Sends the queued map marks in batches
+function widget:Update(dt)
+    if #markQueue == 0 then
+        return
     end
-    if key == 306 then --CTRL
-        ctrlMode = false
-        return false
+    markTimer = markTimer + dt
+    if markTimer < BATCH_INTERVAL then
+        return
     end
-end
+    markTimer = 0
 
-local sizeIteratinOrder = {}
-for size in pairs(currentLayout.buildings) do
-    table.insert(sizeIteratinOrder, size)
+    for _ = 1, LINES_PER_BATCH do
+        local line = table.remove(markQueue, 1)
+        if not line then
+            break
+        end
+        Spring.MarkerAddLine(line[1], MARK_HEIGHT, line[2], line[3], MARK_HEIGHT, line[4])
+    end
+    if #markQueue == 0 then
+        log("all lines rendered")
+    end
 end
-table.sort(sizeIteratinOrder, function(a, b)
-    return a > b
-end) -- descending
 
 function widget:DrawWorld()
-    if drawingToGame then
-        return
-    end
-
+    gl.PushAttrib(GL.ALL_ATTRIB_BITS)
     gl.DepthTest(true)
 
-    if drawChunkGrid then
-        local mx, mz = Spring.GetMouseState()
-        local _, pos = Spring.TraceScreenRay(mx, mz, true)
-        if pos then
-            DrawChunkGrid(pos[1], pos[3])
-        end
-    end
-
-    -- Draw layout
-    -- Iterate in order
-    for _, size in ipairs(sizeIteratinOrder) do
-        local positions = currentLayout.buildings[size]
-        for _, pos in ipairs(positions) do
-            local bx, bz = pos[1], pos[2]
-            local wx, wz = BUToWorld(bx, bz)
-            local wy = Spring.GetGroundHeight(wx, wz)
-
-            if differTypesByColor then
-                for _, building in ipairs(buildingTypes) do
-                    if building.size == size then
-                        gl.Color(unpack(building.color))
-                        break
-                    end
-                end
-            else
-                gl.Color(0, 1, 0, 0.3)
-            end
-
-            gl.BeginEnd(GL.QUADS, function()
-                gl.Vertex(wx, wy + 5, wz)
-                gl.Vertex(wx + BU_SIZE * size, wy + 5, wz)
-                gl.Vertex(wx + BU_SIZE * size, wy + 5, wz + BU_SIZE * size)
-                gl.Vertex(wx, wy + 5, wz + BU_SIZE * size)
-            end)
-        end
-    end
-    -- Render Lines
-    gl.Color(0, 1, 0, 0.6)
-    gl.LineWidth(3)
-    gl.BeginEnd(GL.LINES, function()
-        for _, line in ipairs(currentLayout.lines) do
-            local x1, z1 = BUToWorld(line[1], line[2])
-            local x2, z2 = BUToWorld(line[3], line[4])
-            local y1 = Spring.GetGroundHeight(x1, z1)
-            local y2 = Spring.GetGroundHeight(x2, z2)
-
-            gl.Vertex(x1, y1 + 5, z1)
-            gl.Vertex(x2, y2 + 5, z2)
-        end
-    end)
-
-    -- Draw preview
     local mx, my = Spring.GetMouseState()
-    local _, pos = Spring.TraceScreenRay(mx, my, true)
+    local pos = traceGround(mx, my)
+    if prefs.drawChunkGrid and pos then
+        drawChunkGrid(pos[1], pos[3])
+    end
+    drawLayout(currentLayout)
     if pos then
-        local bx, bz = WorldToBU(pos[1], pos[3])
-
-        gl.Color(1, 1, 0, 0.4)
-
-        if loadedData then
-            for size, buildings in pairs(loadedData.layout.buildings) do
-                for _, b in ipairs(buildings) do
-                    local shiftX = b[1] - math.floor((loadedData.width + loadedData.minSize) / 2)
-                    local shiftZ = b[2] - math.floor((loadedData.height + loadedData.minSize) / 2)
-
-                    local pbx, pbz = math.floor(bx + shiftX), math.floor(bz + shiftZ)
-                    local wx, wz = BUToWorld(pbx, pbz)
-                    local wy = Spring.GetGroundHeight(wx, wz)
-
-                    gl.BeginEnd(GL.QUADS, function()
-                        gl.Vertex(wx, wy + 5, wz)
-                        gl.Vertex(wx + BU_SIZE * size, wy + 5, wz)
-                        gl.Vertex(wx + BU_SIZE * size, wy + 5, wz + BU_SIZE * size)
-                        gl.Vertex(wx, wy + 5, wz + BU_SIZE * size)
-                    end)
-                end
-            end
-
-            -- Render layout lines
-            gl.LineWidth(3)
-            gl.BeginEnd(GL.LINES, function()
-                for _, line in ipairs(loadedData.layout.lines) do
-                    local shiftX1 = line[1]
-                        - math.floor((loadedData.width + loadedData.minSize) / 2)
-                    local shiftZ1 = line[2]
-                        - math.floor((loadedData.height + loadedData.minSize) / 2)
-                    local shiftX2 = line[3]
-                        - math.floor((loadedData.width + loadedData.minSize) / 2)
-                    local shiftZ2 = line[4]
-                        - math.floor((loadedData.height + loadedData.minSize) / 2)
-
-                    local pbx1, pbz1 = math.floor(bx + shiftX1), math.floor(bz + shiftZ1)
-                    local pbx2, pbz2 = math.floor(bx + shiftX2), math.floor(bz + shiftZ2)
-
-                    local wx1, wz1 = BUToWorld(pbx1, pbz1)
-                    local wx2, wz2 = BUToWorld(pbx2, pbz2)
-
-                    local wy1 = Spring.GetGroundHeight(wx1, wz1)
-                    local wy2 = Spring.GetGroundHeight(wx2, wz2)
-
-                    gl.Vertex(wx1, wy1 + 6, wz1)
-                    gl.Vertex(wx2, wy2 + 6, wz2)
-                end
-            end)
-        elseif drawingMode then
-            if not lineStart then
-                local list
-                local size = dragStart and dragStart.size or buildingTypes[currentSizeIndex].size
-
-                if snapBuilding then
-                    bx = math.floor(bx / size) * size
-                    bz = math.floor(bz / size) * size
-                end
-                if altMode and ctrlMode and dragStart then
-                    gl.Color(1, 1, 0, 0.4)
-                    local lines = TraceRectangleBounds(dragStart, { bx = bx, bz = bz })
-                    for _, line in ipairs(lines) do
-                        local x1, z1 = BUToWorld(line[1], line[2])
-                        local x2, z2 = BUToWorld(line[3], line[4])
-
-                        local y1 = Spring.GetGroundHeight(x1, z1)
-                        local y2 = Spring.GetGroundHeight(x2, z2)
-                        gl.BeginEnd(GL.LINES, function()
-                            gl.Vertex(x1, y1 + 5, z1)
-                            gl.Vertex(x2, y2 + 5, z2)
-                        end)
-                    end
-                else
-                    if dragStart then
-                        list = GetBuildingList(dragStart, bx, bz, altMode)
-                    else
-                        list = { { x = bx, z = bz } }
-                    end
-                    if #list == 1 then
-                        local lsx, lsz = BUToWorld(WorldToBU(pos[1] + HALF_BU, pos[3] + HALF_BU))
-                        local wy = Spring.GetGroundHeight(lsx, lsz)
-                        gl.BeginEnd(GL.QUADS, function()
-                            gl.Vertex(lsx - 2, wy + 5, lsz - 2)
-                            gl.Vertex(lsx + 2, wy + 5, lsz - 2)
-                            gl.Vertex(lsx + 2, wy + 5, lsz + 2)
-                            gl.Vertex(lsx - 2, wy + 5, lsz + 2)
-                        end)
-                    end
-                    for _, v in ipairs(list) do
-                        local wx, wz = BUToWorld(v.x, v.z)
-                        local wy = Spring.GetGroundHeight(wx, wz)
-
-                        gl.BeginEnd(GL.QUADS, function()
-                            gl.Vertex(wx, wy + 5, wz)
-                            gl.Vertex(wx + BU_SIZE * size, wy + 5, wz)
-                            gl.Vertex(wx + BU_SIZE * size, wy + 5, wz + BU_SIZE * size)
-                            gl.Vertex(wx, wy + 5, wz + BU_SIZE * size)
-                        end)
-                    end
-                end
-            else
-                if altMode then
-                    gl.Color(1, 0.5, 0, 1)
-                else
-                    gl.Color(1, 1, 0, 1)
-                end
-
-                gl.LineWidth(3)
-                local bx, bz = BUToWorld(lineStart.bx, lineStart.bz)
-                local ex, ez = BUToWorld(WorldToBU(pos[1] + HALF_BU, pos[3] + HALF_BU))
-
-                local y1 = Spring.GetGroundHeight(bx, bz)
-                local y2 = Spring.GetGroundHeight(ex, ez)
-
-                gl.BeginEnd(GL.LINES, function()
-                    gl.Vertex(bx, y1 + 5, bz)
-                    gl.Vertex(ex, y2 + 5, ez)
-                end)
-
-                if altMode then
-                    ex, ez = WorldToBU(pos[1] + HALF_BU, pos[3] + HALF_BU)
-                    local indices = GetIntersectingLineIndices(
-                        currentLayout,
-                        { lineStart.bx, lineStart.bz, ex, ez }
-                    )
-                    gl.LineWidth(4)
-                    gl.Color(0.7, 0.3, 1, 1)
-                    --Spring.Echo("REM LINES ", tostring(#indices))
-                    gl.BeginEnd(GL.LINES, function()
-                        for _, idx in ipairs(indices) do
-                            local line = currentLayout.lines[idx]
-                            local x1, z1 = BUToWorld(line[1], line[2])
-                            local x2, z2 = BUToWorld(line[3], line[4])
-                            local y1 = Spring.GetGroundHeight(x1, z1)
-                            local y2 = Spring.GetGroundHeight(x2, z2)
-
-                            gl.Vertex(x1, y1 + 5, z1)
-                            gl.Vertex(x2, y2 + 5, z2)
-                        end
-                    end)
-                end
-            end
-        end
+        drawPreview(pos)
     end
 
-    gl.Color(1, 1, 1, 1)
-    gl.DepthTest(false)
+    gl.PopAttrib()
 end
 
-function widget:Update(dt)
-    if not renderingToGame then
-        if myUI then
-            currentToolTip = nil
-            local mx, my = Spring.GetMouseState()
-            myUI:Hover(mx, my)
-        end
+function widget:DrawScreen()
+    myUI:Draw()
+    if not prefs.showUsageTips then
         return
     end
-    timer = timer + dt
-    if timer > 0.1 then
-        for _ = 1, 10 do
-            if #drawLineQueue == 0 then
-                Spring.Echo("[LayoutPlanner] All lines rendered..")
-                renderingToGame = false
-                return
-            end
 
-            local data = table.remove(drawLineQueue, 1)
-            Spring.MarkerAddLine(data.startX, data.y, data.startZ, data.endX, data.y, data.endZ)
-        end
-        timer = 0
+    local hints = {}
+    for _, hint in ipairs(loadedData and LOADED_HINTS or drawingMode and DRAWING_HINTS or {}) do
+        table.insert(hints, hint)
+    end
+    if prefs.allowTranslationByKeys then
+        table.insert(hints, "Translate layout using [W][A][S][D] keys")
+    end
+    if historyPointer > 0 then
+        table.insert(hints, "Undo last action with [CTRL]+[Z]")
+    end
+    if historyPointer < #commandHistory then
+        table.insert(hints, "Redo next action with [CTRL]+[A]")
+    end
+
+    local vsx, vsy = gl.GetViewSizes()
+    local x = (vsx - 19 * 18) / 2
+    gl.Color(1, 1, 0.5, 1)
+    for i, hint in ipairs(hints) do
+        gl.Text(hint, x, vsy * 0.4 - (i - 1) * 20, 18, "o")
     end
 end
