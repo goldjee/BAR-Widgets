@@ -30,7 +30,6 @@
                 <h1>Stage: <span class="warning">Hatching</span></h1>
                 <p>{{queenCount}} queens, Hatch: {{queenHatchProgress}}%, ETA: {{queenETA}}</p>
                 <p class="text-sm text-dim">Rate: +{{angerGainTotal}}/s</p>
-                <!-- <p class="text-sm text-dim">Base: {{angerGainBase}}  Eco: {{angerGainEco}}  Aggro: {{angerGainAggression}}</p> -->
                 <p>Evolution: {{angerTech}}%</p>
             </div>
 
