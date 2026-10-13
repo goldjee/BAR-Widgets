@@ -9,6 +9,7 @@ function widget:GetInfo()
         layer   = 2,
         enabled = true,
         handler = true,
+        version = 2,
     }
 end
 
