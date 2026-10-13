@@ -5,10 +5,10 @@ function widget:GetInfo()
         name = "Raptor Timing Notifications",
         desc = "Shows timing reminders for NuttyB Raptor spawns and aggro",
         author = "Insider",
-        date = "27.09.2025",
+        date = "13.10.2026",
         layer = 0,
         enabled = true,
-        version = 3,
+        version = 4,
     }
 end
 

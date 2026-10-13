@@ -9,10 +9,10 @@ function widget:GetInfo()
         name = "Raptor Panel",
         desc = "Shows raptor and player statistics in a compact interface",
         author = "Insider",
-        date = "16.10.2025",
+        date = "13.10.2026",
         layer = 0,
         enabled = true,
-        version = 4,
+        version = 5,
     }
 end
 
