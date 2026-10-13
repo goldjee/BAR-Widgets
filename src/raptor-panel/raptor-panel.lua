@@ -401,7 +401,7 @@ function widget:Initialize()
         return fail("failed to get RML context")
     end
 
-    dataModel = rmlContext:OpenDataModel(MODEL_NAME, initModel)
+    dataModel = rmlContext:OpenDataModel(MODEL_NAME, initModel, widget)
     if not dataModel then
         return fail("failed to create data model")
     end
@@ -416,11 +416,13 @@ function widget:Initialize()
         end
     end
     for _, unitID in ipairs(Spring.GetAllUnits()) do
-        widget:UnitCreated(unitID, Spring.GetUnitDefID(unitID), Spring.GetUnitTeam(unitID))
+        addEcoValue(Spring.GetUnitDefID(unitID), Spring.GetUnitTeam(unitID), 1)
     end
 
     update()
 
+    -- the widget arg exposes `widget` to the RML event handlers; the engine types omit it
+    ---@diagnostic disable-next-line: redundant-parameter
     document = rmlContext:LoadDocument(RML_PATH, widget)
     if not document then
         return fail("failed to load document: " .. RML_PATH)

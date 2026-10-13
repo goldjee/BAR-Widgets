@@ -32,6 +32,8 @@ local function notifyOnce(msg)
     end
     notified[msg] = true
 
+    -- the engine reads the channel from the last arg; the types only model the full form
+    ---@diagnostic disable-next-line: param-type-mismatch
     Spring.PlaySoundFile(NOTIFICATION_SOUND, 1.0, "ui")
     if IS_DEBUG then
         Spring.Echo("Raptor Notification: " .. msg)
