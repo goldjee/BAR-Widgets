@@ -7,3 +7,15 @@ Also available as actions for hotkey binding: `reclaim_selected` (every nearby t
 ## Installation
 
 Take all files from this folder into your `[...]\Beyond-All-Reason\data\LuaUI\Widgets\reclaim-selected` folder and enable the "Reclaim Selected" widget from the in-game settings menu.
+
+Alternatively, clone this repository and symlink the folder, so `git pull` keeps it up to date (see the [main README](../../README.md#install-with-git-and-a-symlink)). From the repository root:
+
+```powershell
+# Windows (PowerShell)
+New-Item -ItemType Junction -Path "$env:LOCALAPPDATA\Programs\Beyond-All-Reason\data\LuaUI\Widgets\reclaim-selected" -Target "$PWD\src\reclaim-selected"
+```
+
+```bash
+# Linux
+ln -s "$PWD/src/reclaim-selected" "$HOME/.local/state/Beyond All Reason/LuaUI/Widgets/reclaim-selected"
+```

@@ -25,3 +25,15 @@ Type `/luaui copyqueue` (or `/luaui cq`) in chat to print this list.
 ## Installation
 
 Take all files from this folder into your `[...]\Beyond-All-Reason\data\LuaUI\Widgets\split-builder-queue` folder and enable the "Split Builder Queue" widget from the in-game settings menu.
+
+Alternatively, clone this repository and symlink the folder, so `git pull` keeps it up to date (see the [main README](../../README.md#install-with-git-and-a-symlink)). From the repository root:
+
+```powershell
+# Windows (PowerShell)
+New-Item -ItemType Junction -Path "$env:LOCALAPPDATA\Programs\Beyond-All-Reason\data\LuaUI\Widgets\split-builder-queue" -Target "$PWD\src\split-builder-queue"
+```
+
+```bash
+# Linux
+ln -s "$PWD/src/split-builder-queue" "$HOME/.local/state/Beyond All Reason/LuaUI/Widgets/split-builder-queue"
+```

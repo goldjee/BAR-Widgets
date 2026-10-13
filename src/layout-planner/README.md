@@ -21,3 +21,15 @@ Saved layouts go to the same folder as `layout_<slot>.txt`.
 ## Installation
 
 Take all files from this folder into your `[...]\Beyond-All-Reason\data\LuaUI\Widgets\layout-planner` folder and enable the "Layout Planner" widget from the in-game settings menu.
+
+Alternatively, clone this repository and symlink the folder, so `git pull` keeps it up to date (see the [main README](../../README.md#install-with-git-and-a-symlink)). From the repository root:
+
+```powershell
+# Windows (PowerShell)
+New-Item -ItemType Junction -Path "$env:LOCALAPPDATA\Programs\Beyond-All-Reason\data\LuaUI\Widgets\layout-planner" -Target "$PWD\src\layout-planner"
+```
+
+```bash
+# Linux
+ln -s "$PWD/src/layout-planner" "$HOME/.local/state/Beyond All Reason/LuaUI/Widgets/layout-planner"
+```
