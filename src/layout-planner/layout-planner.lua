@@ -1560,7 +1560,7 @@ local function createUI()
         fontSize = 20,
         onClick = function()
             Spring.SendCommands({
-                'say Go to Settings -> Interface, turn off "Auto Erase Map Marks" so you never lose the layout lines again :)',
+                'say a: Go to Settings -> Interface, turn off "Auto Erase Map Marks" so you never lose the layout lines again :)',
             })
         end,
     }))

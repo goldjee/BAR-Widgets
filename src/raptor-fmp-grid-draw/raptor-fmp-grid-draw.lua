@@ -161,6 +161,11 @@ function widget:Initialize()
         return
     end
 
+    -- ponytail: every ally running this widget sends it too, so duplicates are expected
+    Spring.SendCommands(
+        'say a: Go to Settings -> Interface, turn off "Auto Erase Map Marks" so you never lose the grid lines :)'
+    )
+
     for row, cells in ipairs(MAPPING) do
         for col, value in ipairs(cells) do
             local x, z = (col - 1) * CELL_SIZE, (row - 1) * CELL_SIZE
