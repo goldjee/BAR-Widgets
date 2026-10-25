@@ -1,28 +1,7 @@
 local WIDGET_NAME = "Build Orders"
 
-local WIDGET_DESC = [[
-This widget stablishes a mechanism of BuildOrders which will take control of constructor units to force the construction of specific buildings.
-You define two lists:
-    - PRIORITY list have units that can call for reclaim when its build space is blocked.
-    - ERASEABLE list define which units this widget can reclaim to give space for priority units.
-
-Declare which units are priority and which units can be erased on the lists on custom files as you want; use the UnitDef name
-
-BuildOrders will try to make sure a priority building is built where you place them, that means:
-    - Priority unit will call reclaim on everything blocking its path that is declared on the ERASEABLE list. The reclaim call will use construction turrets at range to reclaim blocking units. <!> If there's no turrets in range it will stall.
-    - It will skip the construction of units that is blocked by non-eraseable units
-    - Construction of non priority unit will be handled normally by the engine
-    - If a priority unit is destroyed during construction before it reachs its YOLO-PLACE percentage, the BuildOrder will try to assign new build commands at the same place if the REPEAT option is enabled
-
-Some notes:
-    - A unit can be both priority and eraseable.
-    - BuildOrders will try to reclaim anything on the eraseable list! EVEN OTHER PRIORITY UNITS! if they are also declared as eraseable
-    - Construction Turrets are both priority and eraseable by default
-    - You can hold Shift to queue units of the same type (trying to enqueue different buildings will cause it to ignore the previous build orders)
-    - A constructor cannot reclaim itself with its own build order (although other worker might call to reclaim another blocking worker)
-    - This works with HOLO PLACE; build orders will proceed once reach the HOLO-PLACE value
-    - Construction turrets cannot erase turrets of the same or higher tiers.
-]]
+local WIDGET_DESC =
+    "Make builders build priority buildings where you place them, reclaiming what blocks them."
 
 local widget = widget ---@type Widget
 
@@ -1219,13 +1198,39 @@ end
 -- UI
 -- ========================================
 
+local HELP_TEXT = [[
+BUILD ORDERS: click "Enable Build Orders", then place buildings as usual
+  Priority buildings get built exactly where you place them:
+  blockers on the Eraseable list are reclaimed by turrets in range,
+  other blockers are skipped; with no turret in range the order waits
+  Non-priority buildings are built normally
+  [SHIFT] queues more of the same building; another building replaces the queue
+  Hold [SPACE] while placing to split the buildings between selected builders
+  [N] skips the current building of the selected builders
+  Move, stop, fight and similar orders without [SHIFT] cancel the build order
+  With Holo Place, builders move on at its build progress threshold
+  Repeat Mode rebuilds a building destroyed before that threshold
+LISTS: unit def names, editable after "Create Custom ... File" in Settings
+  Priority: buildings that may reclaim what blocks them
+  Eraseable: units that may be reclaimed for them
+  A unit can be on both lists; construction turrets are by default
+  Eraseable units are reclaimed even when they are also priority
+  A turret can't erase a turret of its own or a higher tier
+  A builder never reclaims itself]]
+
+local FONT_SIZE = 16
+
+-- Button colors by role
+local GREY = { 0.3, 0.3, 0.3, 1.0 } -- everything else
+local CYAN = { 0.0, 0.6, 0.6, 1.0 } -- toggled on
+
 -- Checkbox for a boolean pref
 local function makePrefToggle(text, tooltip, key)
     return makeCheckbox({
         text = text,
         tooltip = tooltip,
         checked = prefs[key],
-        fontSize = 16,
+        fontSize = FONT_SIZE,
         bgColor = TRANSPARENT,
         onToggle = function(checked)
             prefs[key] = checked
@@ -1237,13 +1242,9 @@ end
 local function makeCustomFileButton(kind)
     return makeButton({
         text = "Create Custom " .. kind:gsub("^%l", string.upper) .. " File",
-        tooltip = "Copy the default "
-            .. kind
-            .. " list to "
-            .. OVERRIDES_DIR
-            .. "/ to customize it.\nThe widget will use the units defined on the file instead of the default ones.",
-        fontSize = 16,
-        bgColor = { 0.6, 0.6, 0.6, 1 },
+        tooltip = "Copy the default " .. kind .. " list to " .. OVERRIDES_DIR .. "/ to edit it",
+        fontSize = FONT_SIZE,
+        bgColor = GREY,
         onClick = function()
             createCustomFile(kind)
         end,
@@ -1251,80 +1252,87 @@ local function makeCustomFileButton(kind)
 end
 
 local function createUI()
-    local debugWarning =
-        "[❗NOT RECOMMENDED, THIS IS A DEBUG/DEVELOPMENT OPTION AND MIGHT CAUSE FPS ISSUES]\n"
-
-    uiQueueSizeLabel = makeLabel({ fontSize = 16, bgColor = TRANSPARENT })
-    uiMainBox = makeBox({ bgColor = TRANSPARENT, spacing = 0, padding = 2 })
-    uiMainBox:Add(makeCheckbox({
-        text = "Enable Build Order",
-        tooltip = "Enable this widget to intercept and manage building commands.\nDisabling does not terminate active Build Orders!",
-        checked = enableBuildOrders,
-        fontSize = 20,
-        bgColor = TRANSPARENT,
-        onToggle = function(checked)
-            enableBuildOrders = checked
-            notify("Build Orders: " .. (checked and "ON" or "OFF"))
+    local mainRow =
+        makeBox({ orientation = "horizontal", spacing = 6, padding = 0, bgColor = TRANSPARENT })
+    mainRow:Add(makeButton({
+        text = "Enable Build Orders",
+        tooltip = "Take over build commands (turning off keeps active orders)",
+        bgColor = enableBuildOrders and CYAN or GREY,
+        fontSize = FONT_SIZE,
+        onClick = function(self)
+            enableBuildOrders = not enableBuildOrders
+            self.bgColor = enableBuildOrders and CYAN or GREY
+            notify("Build Orders: " .. (enableBuildOrders and "ON" or "OFF"))
         end,
     }))
-    uiMainBox:Add(uiQueueSizeLabel)
+    uiQueueSizeLabel = makeLabel({ fontSize = FONT_SIZE, bgColor = TRANSPARENT })
+    mainRow:Add(uiQueueSizeLabel)
+    uiMainBox = makeBox({ bgColor = TRANSPARENT, padding = 6, spacing = 6 })
+    uiMainBox:Add(mainRow)
 
-    uiConfigBox = makeBox({ bgColor = TRANSPARENT })
+    uiConfigBox = makeBox({ bgColor = TRANSPARENT, padding = 6, spacing = 6 })
     uiConfigBox:Add(
         makePrefToggle(
             "Repeat Mode",
-            "Workers will repeat build orders again on the same place, if the construction get destroyed before it reachs the HOLO-PLACE value.",
+            "Rebuild a building destroyed before its Holo Place threshold",
             "REPEAT"
         )
     )
     uiConfigBox:Add(
         makePrefToggle(
-            "Enable notifications",
-            "Widget will print brief custom event messages",
+            "Notifications",
+            "Show short event messages under the window",
             "NOTIFICATIONS"
         )
     )
     uiConfigBox:Add(
         makePrefToggle(
             "Always Draw Queue",
-            debugWarning .. "Always render the construction queue of your workers.",
+            "Always draw builders' queues (debug: may cost FPS)",
             "ALWAYS_DRAW_RENDER_PATH"
         )
     )
     uiConfigBox:Add(
-        makePrefToggle(
-            "DEBUG",
-            debugWarning .. "Render aditional data about Build Orders",
-            "DEBUG_MODE"
-        )
+        makePrefToggle("Debug", "Draw extra build order data (debug: may cost FPS)", "DEBUG_MODE")
     )
     uiConfigBox:Add(makeCustomFileButton("priority"))
     uiConfigBox:Add(makeCustomFileButton("eraseable"))
-    uiConfigBox:Add(makeLabel({
-        text = "DON'T PANIC!",
-        tooltip = WIDGET_DESC,
-        fontSize = 14,
-        bgColor = { 0.45, 0.16, 0.025, 1.0 },
-    }))
 
     myUI = makeWindow({
         title = WIDGET_NAME,
         fontSize = 22,
         fontColor = { 1, 0.6, 0.0, 1.0 },
-        bgColor = { 0, 0, 0, 0.3 },
-        padding = 4,
+        -- the window keeps its widest width, so it paints the background, not the content
+        bgColor = { 0.15, 0.15, 0.15, 1 },
         content = uiMainBox,
         titleButtons = {
             {
-                text = "Open Config",
-                bgColor = { 0.2, 0.2, 0.6, 1.0 },
+                text = "Settings",
+                width = gl.GetTextWidth("Settings") * 14 + 10,
+                bgColor = GREY,
                 onClick = function(button)
                     local opening = myUI.content == uiMainBox
                     myUI.content = opening and uiConfigBox or uiMainBox
-                    button.text = opening and "Close Config" or "Open Config"
+                    button.bgColor = opening and CYAN or GREY
                     if not opening then
                         savePreferences()
                     end
+                end,
+            },
+            {
+                text = "?",
+                tooltip = HELP_TEXT,
+                width = TITLE_BAR_HEIGHT - 8,
+                bgColor = GREY,
+                onClick = function() end,
+            },
+            {
+                text = "X",
+                tooltip = "Close the widget",
+                width = TITLE_BAR_HEIGHT - 8,
+                bgColor = GREY,
+                onClick = function()
+                    widgetHandler:RemoveWidget()
                 end,
             },
         },
@@ -1575,7 +1583,7 @@ function widget:DrawScreen()
     for _, order in pairs(buildOrders) do
         queued = queued + #order.queue
     end
-    uiQueueSizeLabel.text = "Items in Queue: " .. queued
+    uiQueueSizeLabel.text = "In queue: " .. queued
 
     myUI:Draw()
     if prefs.NOTIFICATIONS then
