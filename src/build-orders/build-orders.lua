@@ -588,9 +588,19 @@ local function distributeJobs(unitIDs, placements, distribute, shift)
     end
 end
 
+local function hasBuildCommands(unitID)
+    for _, cmd in ipairs(Spring.GetUnitCommands(unitID, -1) or {}) do
+        if cmd.id < 0 then
+            return true
+        end
+    end
+    return false
+end
+
 -- Re-splits the build orders of unitIDs between all of them, like placing with SPACE held.
--- Only orders of the first one's building and facing are pooled; units with another order
--- are left out. Returns false when none of them has a build order. Other widgets (Split
+-- Only orders of the first one's building and facing are pooled; units with another order,
+-- or with build commands of their own, are left out. Returns the units taken over as
+-- {unitID = true}, or nil when none of them has a build order. Other widgets (Split
 -- Builder Queue) call it through WG.buildOrders.split.
 local function resplit(unitIDs)
     local first
@@ -598,7 +608,7 @@ local function resplit(unitIDs)
         first = first or buildOrders[unitID]
     end
     if not first then
-        return false
+        return nil
     end
 
     local placements = {
@@ -609,6 +619,7 @@ local function resplit(unitIDs)
         positions = {},
     }
     local units = {}
+    local taken = {}
     for _, unitID in ipairs(unitIDs) do
         local order = buildOrders[unitID]
         local sameKind = order and order.buildDef == first.buildDef and order.facing == first.facing
@@ -624,14 +635,15 @@ local function resplit(unitIDs)
                 buildOrders[unitID] = nil
             end
         end
-        if sameKind or not order then
+        if sameKind or not (order or hasBuildCommands(unitID)) then
             units[#units + 1] = unitID
+            taken[unitID] = true
         end
     end
 
     -- shift: builders that kept their job add their share to it
     distributeJobs(units, placements, true, true)
-    return true
+    return taken
 end
 
 -- Reclaim

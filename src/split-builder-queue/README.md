@@ -24,7 +24,7 @@ Type `/luaui copyqueue` (or `/luaui cq`) in chat to print this list.
 
 ## With Build Orders
 
-Constructors with a [Build Orders](../build-orders) order are re-split by Build Orders itself, as if the buildings had been placed with SPACE held, so blockers still get reclaimed. All the hotkeys and guard modifiers above do the same even split for them.
+Constructors with a [Build Orders](../build-orders) order are re-split by Build Orders itself, as if the buildings had been placed with SPACE held, so blockers still get reclaimed. All the hotkeys and guard modifiers above do the same even split for them. Idle and guarding constructors help with it; constructors with normal queues of their own split those among themselves.
 
 ## Installation
 

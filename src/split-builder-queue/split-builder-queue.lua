@@ -51,11 +51,6 @@ end
 -- State
 -- ========================================
 
--- Modifier keys captured on mouse press, before the guard command is issued
-local ctrlHeldOnPress = false
-local altHeldOnPress = false
-local shiftHeldOnPress = false
-
 -- Guard batch: UnitCommand fires once per selected unit
 local processingBatch = false
 local currentUnitIndex = 0
@@ -277,10 +272,18 @@ local function startSelfOrganize(mode)
         return
     end
 
-    -- Build Orders keeps its jobs to itself; it re-splits them between the builders instead
-    -- ponytail: builders without a build order keep their queue; merge both if mixed groups matter
-    if WG.buildOrders and WG.buildOrders.split(builders) then
-        return
+    -- Build Orders keeps its jobs to itself; it re-splits them between the builders without
+    -- queues of their own, the rest split their queues below
+    local taken = WG.buildOrders and WG.buildOrders.split(builders)
+    if taken then
+        for i = #builders, 1, -1 do
+            if taken[builders[i]] then
+                table.remove(builders, i)
+            end
+        end
+        if #builders < 2 then
+            return
+        end
     end
 
     selfOrganizeTask = coroutine.wrap(function()
@@ -334,11 +337,6 @@ function widget:KeyPress(key, mods)
 end
 
 function widget:MousePress()
-    local alt, ctrl, _, shift = Spring.GetModKeyState()
-    ctrlHeldOnPress = ctrl
-    altHeldOnPress = alt
-    shiftHeldOnPress = shift
-
     -- A new click starts a new guard batch
     processingBatch = false
     currentUnitIndex = 0
@@ -348,10 +346,11 @@ function widget:MousePress()
     return false -- don't eat the event
 end
 
--- Guard with modifiers: copy or split the guarded constructor's queue (fires per unit)
-function widget:UnitCommand(unitID, unitDefID, _, cmdID, cmdParams)
-    local ctrlHeld = ctrlHeldOnPress
-    local altHeld = altHeldOnPress
+-- Guard with modifiers: copy or split the guarded constructor's queue (fires per unit).
+-- The keys come with the command, so Build Orders' shift-only helper guards never trigger it.
+function widget:UnitCommand(unitID, unitDefID, _, cmdID, cmdParams, cmdOpts)
+    local ctrlHeld = cmdOpts.ctrl
+    local altHeld = cmdOpts.alt
     if not (ctrlHeld or altHeld) or cmdID ~= CMD.GUARD or not BUILDER_DEFS[unitDefID] then
         return false
     end
@@ -372,7 +371,7 @@ function widget:UnitCommand(unitID, unitDefID, _, cmdID, cmdParams)
         if not Spring.IsUnitSelected(targetID) then
             table.insert(units, 1, targetID) -- first, so its build order is the one re-split
         end
-        splitByBuildOrders = WG.buildOrders.split(units)
+        splitByBuildOrders = WG.buildOrders.split(units) ~= nil
     end
     if splitByBuildOrders then
         processingBatch = true
@@ -406,7 +405,7 @@ function widget:UnitCommand(unitID, unitDefID, _, cmdID, cmdParams)
     currentUnitIndex = currentUnitIndex + 1
     local orders = { STOP_ORDER }
 
-    if ctrlHeld and shiftHeldOnPress and not altHeld then
+    if ctrlHeld and cmdOpts.shift and not altHeld then
         -- CTRL+SHIFT: full queue, rotated to start at a random position
         local startPos = math.random(1, #commands)
         for n = 0, #commands - 1 do

@@ -230,7 +230,13 @@ local function assignNano(unitID, builder, targetID)
         builder.threshold = HOLO_THRESHOLDS[builder.mode] or 0.6
     end
 
-    Spring.GiveOrderToUnit(nanoID, CMD.REPAIR, targetID, 0)
+    -- Inserted at the front, so the nano goes back to fighting afterwards
+    Spring.GiveOrderToUnit(
+        nanoID,
+        CMD.INSERT,
+        { 0, CMD.REPAIR, CMD.OPT_SHIFT, targetID },
+        { "alt" }
+    )
 end
 
 -- Once the nano is assisting and the building passed the threshold,
@@ -242,8 +248,8 @@ local function watchNanoAssist(unitID, builder)
     end
 
     local nanoTarget = Spring.GetUnitIsBuilding(builder.nanoID)
-    local nanoCmdCount = Spring.GetUnitCommands(builder.nanoID, 0)
-    if nanoTarget == builder.buildingID and nanoCmdCount == 1 then
+    local nanoCmdID = Spring.GetUnitCurrentCommand(builder.nanoID)
+    if nanoTarget == builder.buildingID and nanoCmdID == CMD.REPAIR then
         local health, _, _, _, buildProgress = Spring.GetUnitHealth(builder.buildingID)
         if not health then
             resetBuilder(builder)
