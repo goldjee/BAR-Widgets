@@ -1122,10 +1122,15 @@ local function makeWindow(params)
         table.insert(titleButtons, titleButton)
     end
 
-    -- Grows with the content, but doesn't shrink when the content is swapped
+    -- Grows with the content, but doesn't shrink when the content is swapped;
+    -- always fits the title and its buttons
     function window:GetSize()
         local cw, ch = self.content:GetSize()
-        self.width = math.max(self.width, cw)
+        local titleWidth = gl.GetTextWidth(self.title) * self.fontSize + 15
+        for _, titleButton in ipairs(titleButtons) do
+            titleWidth = titleWidth + titleButton.width + 4
+        end
+        self.width = math.max(self.width, cw, titleWidth)
         self.height = TITLE_BAR_HEIGHT + self.padding + ch
         return self.width, self.height
     end
@@ -1199,7 +1204,7 @@ end
 -- ========================================
 
 local HELP_TEXT = [[
-BUILD ORDERS: click "Enable Build Orders", then place buildings as usual
+BUILD ORDERS: click "Enable", then place buildings as usual
   Priority buildings get built exactly where you place them:
   blockers on the Eraseable list are reclaimed by turrets in range,
   other blockers are skipped; with no turret in range the order waits
@@ -1249,7 +1254,7 @@ end
 local function createUI()
     local mainRow = makeBox({ orientation = "horizontal", spacing = 6, padding = 0 })
     mainRow:Add(makeButton({
-        text = "Enable Build Orders",
+        text = "Enable",
         tooltip = "Take over build commands (turning off keeps active orders)",
         bgColor = enableBuildOrders and CYAN or GREY,
         onClick = function(self)

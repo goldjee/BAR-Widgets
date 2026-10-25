@@ -1301,10 +1301,15 @@ local function makeWindow(params)
         table.insert(titleButtons, titleButton)
     end
 
-    -- Grows with the content, but doesn't shrink when the content is swapped
+    -- Grows with the content, but doesn't shrink when the content is swapped;
+    -- always fits the title and its buttons
     function window:GetSize()
         local cw, ch = self.content:GetSize()
-        self.width = math.max(self.width, cw)
+        local titleWidth = gl.GetTextWidth(self.title) * self.fontSize + 15
+        for _, titleButton in ipairs(titleButtons) do
+            titleWidth = titleWidth + titleButton.width + 4
+        end
+        self.width = math.max(self.width, cw, titleWidth)
         self.height = TITLE_BAR_HEIGHT + self.padding + ch
         return self.width, self.height
     end
