@@ -103,8 +103,6 @@ local DRAWING_HINTS = {
 
 -- Settings saved to the config file, in file order
 local PREF_KEYS = {
-    "slots",
-    "slotsPerRow",
     "allowTranslationByKeys",
     "snapBuilding",
     "drawChunkGrid",
@@ -118,8 +116,6 @@ local PREF_KEYS = {
 -- ========================================
 
 local prefs = {
-    slots = 20, -- save/load slots in the window
-    slotsPerRow = 5,
     allowTranslationByKeys = true, -- WASD shift the layout
     snapBuilding = true, -- snap buildings to a grid of their size
     drawChunkGrid = true,
@@ -690,6 +686,28 @@ local function layoutPath(slot)
     return USER_DIR .. "/layout_" .. slot .. ".txt"
 end
 
+-- Slot numbers of the saved layouts, sorted
+local function listSlots()
+    local slots = {}
+    for _, path in ipairs(VFS.DirList(USER_DIR, "layout_*.txt", VFS.RAW)) do
+        local slot = tonumber(path:match("layout_(%d+)%.txt$"))
+        if slot then
+            table.insert(slots, slot)
+        end
+    end
+    table.sort(slots)
+    return slots
+end
+
+local function deleteLayout(slot)
+    local path = layoutPath(slot)
+    if os.remove(path) then
+        log("layout deleted: " .. path)
+    else
+        log("ERROR - failed to delete " .. path)
+    end
+end
+
 local function serializeLayout(layout)
     local out = { "{", "    buildings = {" }
     for size, group in pairs(layout.buildings) do
@@ -712,7 +730,8 @@ local function serializeLayout(layout)
     return table.concat(out, "\n")
 end
 
--- Saves the layout moved to the origin, with the size info placing it again needs
+-- Saves the layout moved to the origin, with the size info placing it again needs.
+-- Returns true if a file was written.
 local function saveLayout(slot, layout)
     local minX, maxX, minZ, maxZ = layoutBounds(layout, false)
     if not minX then
@@ -748,6 +767,7 @@ local function saveLayout(slot, layout)
     file:write("}\n")
     file:close()
     log("layout saved: " .. path)
+    return true
 end
 
 -- Converts a save from the old "x, z, size" per line format
@@ -1417,7 +1437,7 @@ DON'T PANIC!
     Use [right mouse button] to render arbitrary lines to your layout; hold the [ALT] key so you can remove lines.
     You can draw your layout using different size of buildings (Small, Square, Big, Large or Chunk). Adjacent buildings of the same size will be rendered together (i.e.: a single contour for the shape defined by buildings of the same type).
     You can use CTRL+Z/CTRL+A to undo/redo your actions over the active layout.
-    Once the layout is created, save it on a slot using a Save button below, you can load it anytime later pressing the Load button with same slot number.
+    Once the layout is created, save it with the Save New button below. Each saved layout has a row to Load, Overwrite or Delete it.
     A loaded layout can be rotated with the [R] key and inverted with the [I] key before being placed.
     Press "Render" to draw the active layout to the game.
     You can click and drag the widget window by the title bar.
@@ -1443,29 +1463,63 @@ local function makePrefToggle(text, tooltip, key)
     })
 end
 
-local function makeSlotRows(content)
-    for first = 1, prefs.slots, prefs.slotsPerRow do
-        local row = makeBox({ orientation = "horizontal", spacing = 13 })
-        for slot = first, math.min(first + prefs.slotsPerRow - 1, prefs.slots) do
-            local name = string.format("%02d", slot)
-            local slotBox = makeBox({ spacing = 6, bgColor = { 0, 0, 0, 1 } })
-            slotBox:Add(makeButton({
-                text = "Save " .. name,
-                bgColor = { 0.15, 0.6, 0.25, 1.0 },
-                onClick = function()
-                    saveLayout(slot, currentLayout)
-                end,
-            }))
-            slotBox:Add(makeButton({
-                text = "Load " .. name,
-                bgColor = { 0.3, 0.4, 1, 1.0 },
-                onClick = function()
-                    loadLayout(slot)
-                end,
-            }))
-            row:Add(slotBox)
+-- Button that asks "Sure?" on the first click and calls onConfirm() on the second
+local function makeConfirmButton(params)
+    local button = makeButton(params)
+    button.onClick = function(self)
+        if self.text ~= "Sure?" then
+            self.text = "Sure?"
+            return
         end
-        content:Add(row)
+        params.onConfirm()
+    end
+    return button
+end
+
+local slotsBox -- rows of the saved layouts, rebuilt by refreshSlots()
+
+local function refreshSlots()
+    local slots = listSlots()
+    slotsBox.children = {}
+    -- ponytail: deleted slot numbers stay as gaps; renumber the files if that bothers people
+    slotsBox:Add(makeButton({
+        text = "Save New",
+        tooltip = "Saves the current layout as a new one",
+        bgColor = { 0.15, 0.6, 0.25, 1.0 },
+        onClick = function()
+            if saveLayout((slots[#slots] or 0) + 1, currentLayout) then
+                refreshSlots()
+            end
+        end,
+    }))
+    for _, slot in ipairs(slots) do
+        local row = makeBox({ orientation = "horizontal", spacing = 6, bgColor = TRANSPARENT })
+        row:Add(makeLabel({ text = string.format("%02d", slot), bgColor = TRANSPARENT }))
+        row:Add(makeButton({
+            text = "Load",
+            bgColor = { 0.3, 0.4, 1, 1.0 },
+            onClick = function()
+                loadLayout(slot)
+            end,
+        }))
+        row:Add(makeConfirmButton({
+            text = "Overwrite",
+            tooltip = "Replaces this layout with the current one",
+            bgColor = { 0.15, 0.6, 0.25, 1.0 },
+            onConfirm = function()
+                saveLayout(slot, currentLayout)
+                refreshSlots()
+            end,
+        }))
+        row:Add(makeConfirmButton({
+            text = "Delete",
+            bgColor = { 0.6, 0.1, 0.0, 1.0 },
+            onConfirm = function()
+                deleteLayout(slot)
+                refreshSlots()
+            end,
+        }))
+        slotsBox:Add(row)
     end
 end
 
@@ -1564,8 +1618,10 @@ local function createUI()
             })
         end,
     }))
-    content:Add(makeLabel({ text = "Layout Slots:", fontSize = 14, bgColor = TRANSPARENT }))
-    makeSlotRows(content)
+    content:Add(makeLabel({ text = "Layouts:", fontSize = 14, bgColor = TRANSPARENT }))
+    slotsBox = makeBox({ spacing = 6, bgColor = TRANSPARENT })
+    refreshSlots()
+    content:Add(slotsBox)
     content:Add(makeLabel({
         text = "DON'T PANIC!",
         tooltip = HELP_TEXT,
@@ -1597,11 +1653,6 @@ end
 
 function widget:Initialize()
     loadPreferences()
-    if prefs.slots < 0 or prefs.slotsPerRow < 1 then
-        log("ERROR - slots can't be negative and slotsPerRow must be at least 1")
-        widgetHandler:RemoveWidget()
-        return
-    end
     createUI()
 end
 
