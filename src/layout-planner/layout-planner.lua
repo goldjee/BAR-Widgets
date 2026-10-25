@@ -1378,23 +1378,23 @@ end
 -- ========================================
 
 local HELP_TEXT = [[
-DON'T PANIC!
-    To draw your layout, first click on "Draw". You will see a square at your mouse position; it is a preview of where you will draw to the layout. The small dot is where a line will begin.
-    Use [left mouse button] to place buildings, use [ALT] or [ALT + CTRL] keys to change the way it is placed.
-    Use [right mouse button] to render arbitrary lines to your layout; hold the [ALT] key so you can remove lines.
-    You can draw your layout using different size of buildings (Small, Square, Big, Large or Chunk). Adjacent buildings of the same size will be rendered together (i.e.: a single contour for the shape defined by buildings of the same type).
-    You can use CTRL+Z/CTRL+A to undo/redo your actions over the active layout.
-    Once the layout is created, save it with the Save New button. Each saved layout has a row to Load, Overwrite or Delete it.
-    A loaded layout can be rotated with the [R] key and inverted with the [I] key before being placed.
-    Press "Render" to draw the active layout to the game.
-    You can click and drag the widget window by the title bar.
-
-
-IF YOUR ARE NEW:
-    Draw your layout alligned to chunks. The size of a chunk is a multiple of almost every building in the game! You can optimize your layout space based on this.
-    Use the "Snap" option in Settings! Its the best way to render regular layouts, which will be alligned to the grid.
-
-Check and use the widget discord page if you have any trouble with this widget.]]
+DRAW: click "Draw", pick a building size
+  [LMB] place or remove a building; drag for a line of them
+  [ALT]+drag fills an area, [CTRL]+[ALT]+drag traces its outline
+  [RMB] drag draws a line, [ALT]+[RMB] drag removes crossed lines
+  The square previews a building, the dot marks where a line starts
+  Touching buildings of one size render as a single outline
+  [CTRL]+[Z] / [CTRL]+[A] undo / redo, [W][A][S][D] shift the layout
+SAVE AND LOAD
+  "Save New" saves the current layout; each row can Load, Overwrite or Delete
+  A loaded layout follows the mouse: [R] rotates, [I] inverts,
+  [LMB] places it, [ALT]+[LMB] merges it into the current one, [RMB] cancels
+  "Render" draws the current layout on the map as line marks
+TIPS
+  Align layouts to chunks: their size fits almost every building
+  Keep "Snap" (in Settings) on for grid-aligned layouts
+  Drag the window by its title bar
+  Trouble? Ask on the widget's Discord page]]
 
 local FONT_SIZE = 16
 
@@ -1463,7 +1463,7 @@ local function refreshSlots()
     -- ponytail: deleted slot numbers stay as gaps; renumber the files if that bothers people
     header:Add(makeButton({
         text = "Save New",
-        tooltip = "Saves the current layout as a new one",
+        tooltip = "Save the current layout as a new one",
         bgColor = GREEN,
         fontSize = FONT_SIZE,
         onClick = function()
@@ -1482,6 +1482,7 @@ local function refreshSlots()
         }))
         row:Add(makeButton({
             text = "Load",
+            tooltip = "Pick up this layout, then place it with [LMB]",
             bgColor = BLUE,
             fontSize = FONT_SIZE,
             onClick = function()
@@ -1490,7 +1491,7 @@ local function refreshSlots()
         }))
         row:Add(makeConfirmButton({
             text = "Overwrite",
-            tooltip = "Replaces this layout with the current one",
+            tooltip = "Replace this layout with the current one",
             bgColor = GREY,
             fontSize = FONT_SIZE,
             onConfirm = function()
@@ -1534,14 +1535,14 @@ local function createUI()
     local actionRow = makeRow()
     actionRow:Add(makeButton({
         text = "Render",
-        tooltip = "Render all buildings and lines of the current layout as line marks in the game world",
+        tooltip = "Draw the current layout on the map as line marks",
         bgColor = BLUE,
         fontSize = FONT_SIZE,
         onClick = renderLayout,
     }))
     actionRow:Add(makeButton({
         text = "Clear",
-        tooltip = "Removes all buildings and lines from the current layout. [CTRL]+[Z] brings them back",
+        tooltip = "Empty the current layout ([CTRL]+[Z] to undo)",
         bgColor = GREY,
         fontSize = FONT_SIZE,
         onClick = function()
@@ -1552,7 +1553,7 @@ local function createUI()
     }))
     actionRow:Add(makeButton({
         text = "Draw",
-        tooltip = "Allow placing of buildings (LMB) and lines (RMB)",
+        tooltip = "Place building shapes with [LMB] and lines with [RMB]",
         bgColor = GREY,
         fontSize = FONT_SIZE,
         onClick = function(self)
@@ -1565,7 +1566,7 @@ local function createUI()
     }))
     actionRow:Add(makeButton({
         text = "Remind Allies",
-        tooltip = "Send a message about how to disable auto erase. New players on your lobby might need to know this. :)",
+        tooltip = "Tell allies in chat how to stop map marks from being auto-erased",
         bgColor = GREY,
         fontSize = FONT_SIZE,
         onClick = function()
@@ -1583,39 +1584,27 @@ local function createUI()
 
     local settingsContent = makeBox({ bgColor = TRANSPARENT, padding = 6, spacing = 6 })
     settingsContent:Add(
-        makePrefToggle(
-            "Snap",
-            "Snap the building to the grid according to the selected size",
-            "snapBuilding"
-        )
+        makePrefToggle("Snap", "Snap buildings to a grid of their own size", "snapBuilding")
     )
     settingsContent:Add(
         makePrefToggle(
             "Shift Layout",
-            "Whether the active layout can be shifted using the keyboard WASD keys",
+            "Move the current layout with [W][A][S][D]",
             "allowTranslationByKeys"
         )
     )
     settingsContent:Add(
-        makePrefToggle(
-            "Draw Chunk Grid",
-            "Display a chunk aligned grid around mouse",
-            "drawChunkGrid"
-        )
+        makePrefToggle("Draw Chunk Grid", "Show the chunk grid around the mouse", "drawChunkGrid")
     )
     settingsContent:Add(
         makePrefToggle(
             "Colored types",
-            "Display each unit type with different colors",
+            "Give each building size its own color",
             "differTypesByColor"
         )
     )
     settingsContent:Add(
-        makePrefToggle(
-            "Display Text Hints",
-            "Display text usage hints on the screen",
-            "showUsageTips"
-        )
+        makePrefToggle("Display Text Hints", "Show usage hints on screen", "showUsageTips")
     )
 
     myUI = makeWindow({
