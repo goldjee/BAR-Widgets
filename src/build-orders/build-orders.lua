@@ -335,19 +335,20 @@ end
 -- Placement
 -- ========================================
 
--- Returns isBuilder, canBuild for unitID and the given unit def
-local function unitCanBuild(unitID, buildDefID)
+-- Returns isBuilder, canBuild for unitID and all count unit defs in the set buildDefIDs
+local function unitCanBuild(unitID, buildDefIDs, count)
     local unitDefID = Spring.GetUnitDefID(unitID)
     local unitDef = unitDefID and UnitDefs[unitDefID]
     if not unitDef or not unitDef.isBuilder then
         return false, false
     end
+    local matched = 0
     for _, option in ipairs(unitDef.buildOptions) do
-        if option == buildDefID then
-            return true, true
+        if buildDefIDs[option] then
+            matched = matched + 1
         end
     end
-    return true, false
+    return true, matched == count
 end
 
 -- Axis-aligned rectangles given by center and half sizes
@@ -538,20 +539,18 @@ end
 -- Builders can build every job's building. distribute: every one of them gets a share;
 -- otherwise only the first one does.
 local function splitBuilders(selectedUnits, jobs, distribute)
-    local buildDefIDs = {}
+    local buildDefIDs, count = {}, 0
     for _, job in ipairs(jobs) do
-        buildDefIDs[job.buildDef.id] = true
+        if not buildDefIDs[job.buildDef.id] then
+            buildDefIDs[job.buildDef.id] = true
+            count = count + 1
+        end
     end
 
     local builders, helpers = {}, {}
     for _, unitID in ipairs(selectedUnits) do
-        local isBuilder, canBuild = false, true
-        for buildDefID in pairs(buildDefIDs) do
-            local canBuildThis
-            isBuilder, canBuildThis = unitCanBuild(unitID, buildDefID)
-            canBuild = canBuild and canBuildThis
-        end
-        if canBuild and isBuilder and (distribute or #builders == 0) then
+        local isBuilder, canBuild = unitCanBuild(unitID, buildDefIDs, count)
+        if canBuild and (distribute or #builders == 0) then
             builders[#builders + 1] = unitID
         elseif isBuilder then
             helpers[#helpers + 1] = unitID
