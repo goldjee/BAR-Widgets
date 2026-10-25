@@ -957,7 +957,7 @@ local function drawTooltip()
     local height = #lines * lineHeight - 4 + 2 * padding
 
     local mx, my = Spring.GetMouseState()
-    my = my + 6
+    my = math.min(my + 6, select(2, gl.GetViewSizes()) - height - 2) -- keep it on screen
     gl.Color(0.9, 0.5, 0.1, 0.9)
     gl.Rect(mx - 2, my - 6, mx + width + 2 * padding + 2, my + height + 2)
     gl.Color(1, 1, 1, 1)
@@ -1056,7 +1056,7 @@ local function makeLabel(params)
 
     function label:GetSize()
         self.width = gl.GetTextWidth(self.text) * self.fontSize + 10
-        self.height = self.fontSize + 18
+        self.height = self.fontSize + 10
         return self.width + 2 * self.margin, self.height + 2 * self.margin
     end
 
@@ -1123,7 +1123,8 @@ local function makeCheckbox(params)
     return checkbox
 end
 
--- Draggable window with a title bar button (params.titleButton = button params).
+-- Draggable window with title bar buttons (params.titleButtons = list of button
+-- params, laid out left to right at the right end of the title bar).
 -- Unlike other elements, x, y is its top-left corner.
 local function makeWindow(params)
     local window = makeElement(params)
@@ -1136,8 +1137,11 @@ local function makeWindow(params)
     window.dragOffsetX = 0
     window.dragOffsetY = 0
 
-    params.titleButton.height = TITLE_BAR_HEIGHT - 8
-    local titleButton = makeButton(params.titleButton)
+    local titleButtons = {}
+    for _, buttonParams in ipairs(params.titleButtons) do
+        buttonParams.height = TITLE_BAR_HEIGHT - 8
+        table.insert(titleButtons, makeButton(buttonParams))
+    end
 
     -- Grows with the content, but doesn't shrink when the content is swapped
     function window:GetSize()
@@ -1163,9 +1167,14 @@ local function makeWindow(params)
         gl.Color(self.fontColor)
         gl.Text(self.title, self.x + 5, self.y - TITLE_BAR_HEIGHT + 7, self.fontSize, "")
 
-        titleButton.x = right - titleButton.width - 4
-        titleButton.y = self.y - TITLE_BAR_HEIGHT + 4
-        titleButton:Draw()
+        local x = right
+        for i = #titleButtons, 1, -1 do
+            local titleButton = titleButtons[i]
+            x = x - titleButton.width - 4
+            titleButton.x = x
+            titleButton.y = self.y - TITLE_BAR_HEIGHT + 4
+            titleButton:Draw()
+        end
 
         self.content.x = self.x
         self.content.y = self.y - self.height
@@ -1175,8 +1184,10 @@ local function makeWindow(params)
     end
 
     function window:MousePress(mx, my, button)
-        if contains(titleButton, mx, my) then
-            return titleButton:MousePress()
+        for _, titleButton in ipairs(titleButtons) do
+            if contains(titleButton, mx, my) then
+                return titleButton:MousePress()
+            end
         end
         local onTitleBar = mx >= self.x
             and mx <= self.x + self.width
@@ -1303,17 +1314,19 @@ local function createUI()
         bgColor = { 0, 0, 0, 0.3 },
         padding = 4,
         content = uiMainBox,
-        titleButton = {
-            text = "Open Config",
-            bgColor = { 0.2, 0.2, 0.6, 1.0 },
-            onClick = function(button)
-                local opening = myUI.content == uiMainBox
-                myUI.content = opening and uiConfigBox or uiMainBox
-                button.text = opening and "Close Config" or "Open Config"
-                if not opening then
-                    savePreferences()
-                end
-            end,
+        titleButtons = {
+            {
+                text = "Open Config",
+                bgColor = { 0.2, 0.2, 0.6, 1.0 },
+                onClick = function(button)
+                    local opening = myUI.content == uiMainBox
+                    myUI.content = opening and uiConfigBox or uiMainBox
+                    button.text = opening and "Close Config" or "Open Config"
+                    if not opening then
+                        savePreferences()
+                    end
+                end,
+            },
         },
     })
     local _, vsy = gl.GetViewSizes()

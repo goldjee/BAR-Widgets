@@ -1115,7 +1115,7 @@ local function drawTooltip()
     local height = #lines * lineHeight - 4 + 2 * padding
 
     local mx, my = Spring.GetMouseState()
-    my = my + 6
+    my = math.min(my + 6, select(2, gl.GetViewSizes()) - height - 2) -- keep it on screen
     gl.Color(0.9, 0.5, 0.1, 0.9)
     gl.Rect(mx - 2, my - 6, mx + width + 2 * padding + 2, my + height + 2)
     gl.Color(1, 1, 1, 1)
@@ -1214,7 +1214,7 @@ local function makeLabel(params)
 
     function label:GetSize()
         self.width = gl.GetTextWidth(self.text) * self.fontSize + 10
-        self.height = self.fontSize + 18
+        self.height = self.fontSize + 10
         return self.width + 2 * self.margin, self.height + 2 * self.margin
     end
 
@@ -1281,7 +1281,8 @@ local function makeCheckbox(params)
     return checkbox
 end
 
--- Draggable window with a title bar button (params.titleButton = button params).
+-- Draggable window with title bar buttons (params.titleButtons = list of button
+-- params, laid out left to right at the right end of the title bar).
 -- Unlike other elements, x, y is its top-left corner.
 local function makeWindow(params)
     local window = makeElement(params)
@@ -1294,8 +1295,11 @@ local function makeWindow(params)
     window.dragOffsetX = 0
     window.dragOffsetY = 0
 
-    params.titleButton.height = TITLE_BAR_HEIGHT - 8
-    local titleButton = makeButton(params.titleButton)
+    local titleButtons = {}
+    for _, buttonParams in ipairs(params.titleButtons) do
+        buttonParams.height = TITLE_BAR_HEIGHT - 8
+        table.insert(titleButtons, makeButton(buttonParams))
+    end
 
     -- Grows with the content, but doesn't shrink when the content is swapped
     function window:GetSize()
@@ -1321,9 +1325,14 @@ local function makeWindow(params)
         gl.Color(self.fontColor)
         gl.Text(self.title, self.x + 5, self.y - TITLE_BAR_HEIGHT + 7, self.fontSize, "")
 
-        titleButton.x = right - titleButton.width - 4
-        titleButton.y = self.y - TITLE_BAR_HEIGHT + 4
-        titleButton:Draw()
+        local x = right
+        for i = #titleButtons, 1, -1 do
+            local titleButton = titleButtons[i]
+            x = x - titleButton.width - 4
+            titleButton.x = x
+            titleButton.y = self.y - TITLE_BAR_HEIGHT + 4
+            titleButton:Draw()
+        end
 
         self.content.x = self.x
         self.content.y = self.y - self.height
@@ -1333,8 +1342,10 @@ local function makeWindow(params)
     end
 
     function window:MousePress(mx, my, button)
-        if contains(titleButton, mx, my) then
-            return titleButton:MousePress()
+        for _, titleButton in ipairs(titleButtons) do
+            if contains(titleButton, mx, my) then
+                return titleButton:MousePress()
+            end
         end
         local onTitleBar = mx >= self.x
             and mx <= self.x + self.width
@@ -1363,81 +1374,17 @@ local function makeWindow(params)
     return window
 end
 
--- Radio buttons; params.options = {{name, tooltip}}, onSelect(index)
-local function makeSelectionGroup(params)
-    local group = makeElement(params)
-    group.options = params.options
-    group.selected = 1
-    group.onSelect = params.onSelect
-    group.fontSize = params.fontSize or 14
-    group.fontColor = { 1, 1, 1, 1 }
-    local boxSize = group.fontSize + 4
-    local rowHeight = boxSize + 6
-
-    function group:GetSize()
-        self.width = 0
-        for _, option in ipairs(self.options) do
-            self.width = math.max(self.width, gl.GetTextWidth(option.name) * self.fontSize + 30)
-        end
-        self.height = #self.options * rowHeight
-        return self.width + 2 * self.margin, self.height + 2 * self.margin
-    end
-
-    -- Option row i, as an element for the hit tests and drawText()
-    local function optionRow(self, i)
-        local option = self.options[i]
-        return {
-            x = self.x,
-            y = self.y + self.height - boxSize - (i - 1) * rowHeight,
-            width = self.width,
-            height = boxSize,
-            tooltip = option.tooltip,
-            text = option.name,
-            fontSize = self.fontSize,
-            fontColor = self.fontColor,
-        }
-    end
-
-    function group:Draw()
-        drawBackground(self, self.bgColor)
-        for i = 1, #self.options do
-            local row = optionRow(self, i)
-            local shade = isHovered(row) and 0.3 or 0.2
-            gl.Color(shade, shade, shade, 1)
-            gl.Rect(row.x, row.y, row.x + boxSize, row.y + boxSize)
-            if i == self.selected then
-                gl.Color(0, 0.8, 0.8, 1)
-                gl.Rect(row.x + 2, row.y + 2, row.x + boxSize - 2, row.y + boxSize - 2)
-            end
-            drawText(row, row.x + boxSize + 5)
-        end
-    end
-
-    function group:MousePress(mx, my)
-        for i = 1, #self.options do
-            if contains(optionRow(self, i), mx, my) then
-                self.selected = i
-                self.onSelect(i)
-                return true
-            end
-        end
-        return false
-    end
-
-    return group
-end
-
 -- UI
 -- ========================================
 
 local HELP_TEXT = [[
 DON'T PANIC!
-    To draw your layout, first click on "Enable Layout Draw". You will see a square at your mouse position; it is a preview of where you will draw to the layout. The small dot is where a line will begin.
+    To draw your layout, first click on "Draw". You will see a square at your mouse position; it is a preview of where you will draw to the layout. The small dot is where a line will begin.
     Use [left mouse button] to place buildings, use [ALT] or [ALT + CTRL] keys to change the way it is placed.
     Use [right mouse button] to render arbitrary lines to your layout; hold the [ALT] key so you can remove lines.
     You can draw your layout using different size of buildings (Small, Square, Big, Large or Chunk). Adjacent buildings of the same size will be rendered together (i.e.: a single contour for the shape defined by buildings of the same type).
     You can use CTRL+Z/CTRL+A to undo/redo your actions over the active layout.
-    Once the layout is created, save it with the Save New button below. Each saved layout has a row to Load, Overwrite or Delete it.
+    Once the layout is created, save it with the Save New button. Each saved layout has a row to Load, Overwrite or Delete it.
     A loaded layout can be rotated with the [R] key and inverted with the [I] key before being placed.
     Press "Render" to draw the active layout to the game.
     You can click and drag the widget window by the title bar.
@@ -1445,9 +1392,23 @@ DON'T PANIC!
 
 IF YOUR ARE NEW:
     Draw your layout alligned to chunks. The size of a chunk is a multiple of almost every building in the game! You can optimize your layout space based on this.
-    Use the "Snap" option! Its the best way to render regular layouts, which will be alligned to the grid.
+    Use the "Snap" option in Settings! Its the best way to render regular layouts, which will be alligned to the grid.
 
 Check and use the widget discord page if you have any trouble with this widget.]]
+
+local FONT_SIZE = 16
+
+-- Button colors by role
+local BLUE = { 0.2, 0.35, 0.9, 1.0 } -- main actions
+local GREEN = { 0.15, 0.6, 0.25, 1.0 } -- creating
+local RED = { 0.6, 0.1, 0.0, 1.0 } -- armed destructive action
+local GREY = { 0.3, 0.3, 0.3, 1.0 } -- everything else
+local CYAN = { 0.0, 0.6, 0.6, 1.0 } -- toggled on
+
+-- Horizontal box without its own padding or background, so rows line up
+local function makeRow()
+    return makeBox({ orientation = "horizontal", spacing = 6, padding = 0, bgColor = TRANSPARENT })
+end
 
 -- Checkbox for a boolean pref
 local function makePrefToggle(text, tooltip, key)
@@ -1455,7 +1416,8 @@ local function makePrefToggle(text, tooltip, key)
         text = text,
         tooltip = tooltip,
         checked = prefs[key],
-        fontSize = 16,
+        fontSize = FONT_SIZE,
+        bgColor = TRANSPARENT,
         onToggle = function(checked)
             prefs[key] = checked
             log(text .. ": " .. (checked and "ON" or "OFF"))
@@ -1463,12 +1425,27 @@ local function makePrefToggle(text, tooltip, key)
     })
 end
 
--- Button that asks "Sure?" on the first click and calls onConfirm() on the second
+-- Button that turns into a red "Sure?" on the first click and calls onConfirm() on
+-- the second; moving the mouse away disarms it
 local function makeConfirmButton(params)
     local button = makeButton(params)
+    -- keeps its width while saying "Sure?", so the buttons next to it don't shift
+    local width = button:GetSize()
+    function button:GetSize()
+        return width, self.height
+    end
+
+    local draw = button.Draw
+    function button:Draw()
+        if self.text == "Sure?" and not isHovered(self) then
+            self.text, self.bgColor = params.text, params.bgColor
+        end
+        draw(self)
+    end
+
     button.onClick = function(self)
         if self.text ~= "Sure?" then
-            self.text = "Sure?"
+            self.text, self.bgColor = "Sure?", RED
             return
         end
         params.onConfirm()
@@ -1481,23 +1458,32 @@ local slotsBox -- rows of the saved layouts, rebuilt by refreshSlots()
 local function refreshSlots()
     local slots = listSlots()
     slotsBox.children = {}
+    local header = makeRow()
+    header:Add(makeLabel({ text = "Layouts", fontSize = FONT_SIZE, bgColor = TRANSPARENT }))
     -- ponytail: deleted slot numbers stay as gaps; renumber the files if that bothers people
-    slotsBox:Add(makeButton({
+    header:Add(makeButton({
         text = "Save New",
         tooltip = "Saves the current layout as a new one",
-        bgColor = { 0.15, 0.6, 0.25, 1.0 },
+        bgColor = GREEN,
+        fontSize = FONT_SIZE,
         onClick = function()
             if saveLayout((slots[#slots] or 0) + 1, currentLayout) then
                 refreshSlots()
             end
         end,
     }))
+    slotsBox:Add(header)
     for _, slot in ipairs(slots) do
-        local row = makeBox({ orientation = "horizontal", spacing = 6, bgColor = TRANSPARENT })
-        row:Add(makeLabel({ text = string.format("%02d", slot), bgColor = TRANSPARENT }))
+        local row = makeRow()
+        row:Add(makeLabel({
+            text = string.format("%02d", slot),
+            fontSize = FONT_SIZE,
+            bgColor = TRANSPARENT,
+        }))
         row:Add(makeButton({
             text = "Load",
-            bgColor = { 0.3, 0.4, 1, 1.0 },
+            bgColor = BLUE,
+            fontSize = FONT_SIZE,
             onClick = function()
                 loadLayout(slot)
             end,
@@ -1505,7 +1491,8 @@ local function refreshSlots()
         row:Add(makeConfirmButton({
             text = "Overwrite",
             tooltip = "Replaces this layout with the current one",
-            bgColor = { 0.15, 0.6, 0.25, 1.0 },
+            bgColor = GREY,
+            fontSize = FONT_SIZE,
             onConfirm = function()
                 saveLayout(slot, currentLayout)
                 refreshSlots()
@@ -1513,7 +1500,8 @@ local function refreshSlots()
         }))
         row:Add(makeConfirmButton({
             text = "Delete",
-            bgColor = { 0.6, 0.1, 0.0, 1.0 },
+            bgColor = GREY,
+            fontSize = FONT_SIZE,
             onConfirm = function()
                 deleteLayout(slot)
                 refreshSlots()
@@ -1524,57 +1512,105 @@ local function refreshSlots()
 end
 
 local function createUI()
-    local drawBox = makeBox({ orientation = "horizontal", spacing = 6 })
-    drawBox:Add(makeCheckbox({
-        text = "Enable Layout Draw",
-        tooltip = "Allow placing of buildings (LMB) and lines (RMB)",
-        checked = drawingMode,
-        fontSize = 16,
-        onToggle = function(checked)
-            drawingMode = checked
-            log("Drawing: " .. (checked and "ON" or "OFF"))
+    -- Loading and rendering come first; drawing is used much less
+    local content = makeBox({ bgColor = TRANSPARENT, padding = 6, spacing = 6 })
+
+    local sizeRow = makeRow()
+    for i, buildingType in ipairs(BUILDING_TYPES) do
+        sizeRow:Add(makeButton({
+            text = buildingType.name,
+            tooltip = buildingType.tooltip,
+            bgColor = i == currentSizeIndex and CYAN or GREY,
+            fontSize = FONT_SIZE,
+            onClick = function()
+                currentSizeIndex = i
+                for j, button in ipairs(sizeRow.children) do
+                    button.bgColor = j == i and CYAN or GREY
+                end
+            end,
+        }))
+    end
+
+    local actionRow = makeRow()
+    actionRow:Add(makeButton({
+        text = "Render",
+        tooltip = "Render all buildings and lines of the current layout as line marks in the game world",
+        bgColor = BLUE,
+        fontSize = FONT_SIZE,
+        onClick = renderLayout,
+    }))
+    actionRow:Add(makeButton({
+        text = "Clear",
+        tooltip = "Removes all buildings and lines from the current layout. [CTRL]+[Z] brings them back",
+        bgColor = GREY,
+        fontSize = FONT_SIZE,
+        onClick = function()
+            local command = {}
+            pushClearLayout(command, currentLayout)
+            runCommand(command)
         end,
     }))
-    drawBox:Add(
+    actionRow:Add(makeButton({
+        text = "Draw",
+        tooltip = "Allow placing of buildings (LMB) and lines (RMB)",
+        bgColor = GREY,
+        fontSize = FONT_SIZE,
+        onClick = function(self)
+            drawingMode = not drawingMode
+            self.bgColor = drawingMode and CYAN or GREY
+            -- the size row goes last, so nothing above it moves
+            content.children[3] = drawingMode and sizeRow or nil
+            log("Drawing: " .. (drawingMode and "ON" or "OFF"))
+        end,
+    }))
+    actionRow:Add(makeButton({
+        text = "Remind Allies",
+        tooltip = "Send a message about how to disable auto erase. New players on your lobby might need to know this. :)",
+        bgColor = GREY,
+        fontSize = FONT_SIZE,
+        onClick = function()
+            Spring.SendCommands({
+                'say a: Go to Settings -> Interface, turn off "Auto Erase Map Marks" so you never lose the layout lines again :)',
+            })
+        end,
+    }))
+
+    slotsBox = makeBox({ spacing = 6, padding = 0, bgColor = TRANSPARENT })
+    refreshSlots()
+
+    content:Add(actionRow)
+    content:Add(slotsBox)
+
+    local settingsContent = makeBox({ bgColor = TRANSPARENT, padding = 6, spacing = 6 })
+    settingsContent:Add(
         makePrefToggle(
             "Snap",
             "Snap the building to the grid according to the selected size",
             "snapBuilding"
         )
     )
-    drawBox:Add(makeSelectionGroup({
-        options = BUILDING_TYPES,
-        fontSize = 16,
-        onSelect = function(i)
-            currentSizeIndex = i
-        end,
-    }))
-
-    local shiftAndGridBox = makeBox({ orientation = "horizontal", spacing = 6 })
-    shiftAndGridBox:Add(
+    settingsContent:Add(
         makePrefToggle(
             "Shift Layout",
             "Whether the active layout can be shifted using the keyboard WASD keys",
             "allowTranslationByKeys"
         )
     )
-    shiftAndGridBox:Add(
+    settingsContent:Add(
         makePrefToggle(
             "Draw Chunk Grid",
             "Display a chunk aligned grid around mouse",
             "drawChunkGrid"
         )
     )
-
-    local hintsBox = makeBox({ orientation = "horizontal", spacing = 6 })
-    hintsBox:Add(
+    settingsContent:Add(
         makePrefToggle(
             "Colored types",
             "Display each unit type with different colors",
             "differTypesByColor"
         )
     )
-    hintsBox:Add(
+    settingsContent:Add(
         makePrefToggle(
             "Display Text Hints",
             "Display text usage hints on the screen",
@@ -1582,64 +1618,40 @@ local function createUI()
         )
     )
 
-    local layoutButtons = makeBox({ orientation = "horizontal", spacing = 6 })
-    layoutButtons:Add(makeButton({
-        text = "Clear Layout",
-        tooltip = "Removes all buildings and lines from the current layout",
-        bgColor = { 0.8, 0.4, 0.1, 1.0 },
-        fontSize = 20,
-        onClick = function()
-            local command = {}
-            pushClearLayout(command, currentLayout)
-            runCommand(command)
-        end,
-    }))
-    layoutButtons:Add(makeButton({
-        text = "Render",
-        tooltip = "Render all buildings and lines of the current layout as line marks in the game world",
-        bgColor = { 0.0, 0.2, 0.8, 1.0 },
-        fontSize = 20,
-        onClick = renderLayout,
-    }))
-
-    local content = makeBox({ bgColor = { 0.15, 0.15, 0.15, 1 }, spacing = 6 })
-    content:Add(drawBox)
-    content:Add(shiftAndGridBox)
-    content:Add(hintsBox)
-    content:Add(layoutButtons)
-    content:Add(makeButton({
-        text = "Auto Erase Reminder",
-        tooltip = "Send a message about how to disable auto erase. New players on your lobby might need to know this. :)",
-        bgColor = { 0.0, 0.2, 0.1, 1.0 },
-        fontSize = 20,
-        onClick = function()
-            Spring.SendCommands({
-                'say a: Go to Settings -> Interface, turn off "Auto Erase Map Marks" so you never lose the layout lines again :)',
-            })
-        end,
-    }))
-    content:Add(makeLabel({ text = "Layouts:", fontSize = 14, bgColor = TRANSPARENT }))
-    slotsBox = makeBox({ spacing = 6, bgColor = TRANSPARENT })
-    refreshSlots()
-    content:Add(slotsBox)
-    content:Add(makeLabel({
-        text = "DON'T PANIC!",
-        tooltip = HELP_TEXT,
-        fontSize = 14,
-        bgColor = { 0.45, 0.16, 0.025, 1.0 },
-    }))
-
     myUI = makeWindow({
         title = "Layout Planner",
         fontSize = 22,
         fontColor = { 1, 0.6, 0.0, 1.0 },
+        -- the window keeps its widest width, so it paints the background, not the content
+        bgColor = { 0.15, 0.15, 0.15, 1 },
         content = content,
-        titleButton = {
-            text = "Close Widget",
-            bgColor = { 0.6, 0.1, 0.0, 1.0 },
-            onClick = function()
-                widgetHandler:RemoveWidget()
-            end,
+        titleButtons = {
+            {
+                text = "Settings",
+                width = gl.GetTextWidth("Settings") * 14 + 10,
+                bgColor = GREY,
+                onClick = function(button)
+                    local opening = myUI.content == content
+                    myUI.content = opening and settingsContent or content
+                    button.bgColor = opening and CYAN or GREY
+                end,
+            },
+            {
+                text = "?",
+                tooltip = HELP_TEXT,
+                width = TITLE_BAR_HEIGHT - 8,
+                bgColor = GREY,
+                onClick = function() end,
+            },
+            {
+                text = "X",
+                tooltip = "Close the widget",
+                width = TITLE_BAR_HEIGHT - 8,
+                bgColor = GREY,
+                onClick = function()
+                    widgetHandler:RemoveWidget()
+                end,
+            },
         },
     })
     local _, vsy = gl.GetViewSizes()
