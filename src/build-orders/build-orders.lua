@@ -140,8 +140,8 @@ local prefs = {
 local enableBuildOrders = false
 local localTeam
 
--- {builderID = {buildDef, halfX, halfZ, facing, currentJob, queue = {{ud, x, z}},
--- originalSize, checkTime, updateDelay}}
+-- {builderID = {currentJob, queue = {{buildDef, halfX, halfZ, facing, x, z}}, originalSize,
+-- checkTime, updateDelay}}; currentJob is about queue[1]
 local buildOrders = {}
 
 -- {unitDefID = {id, name, xsize, zsize, halfX, halfZ, searchRadius}}, see buildLookup()
@@ -465,62 +465,59 @@ local function computeActivePlacements(endX, endZ)
     end
     local alt, ctrl, _, shift = Spring.GetModKeyState()
 
-    return {
-        buildDef = buildDef,
-        halfX = halfX,
-        halfZ = halfZ,
-        facing = facing,
-        positions = computePlacements(
-            placementStart.x,
-            placementStart.z,
-            endX,
-            endZ,
-            buildDef,
-            facing,
-            Spring.GetBuildSpacing(),
-            alt,
-            ctrl,
-            shift
-        ),
-    }
+    local positions = computePlacements(
+        placementStart.x,
+        placementStart.z,
+        endX,
+        endZ,
+        buildDef,
+        facing,
+        Spring.GetBuildSpacing(),
+        alt,
+        ctrl,
+        shift
+    )
+    -- Each position becomes a job that knows what to build
+    for _, pos in ipairs(positions) do
+        pos.buildDef, pos.halfX, pos.halfZ, pos.facing = buildDef, halfX, halfZ, facing
+    end
+    return { buildDef = buildDef, halfX = halfX, halfZ = halfZ, positions = positions }
 end
 
--- Gives unitID the placements [startIdx, endIdx); shift adds them to its matching build order.
--- New placements overlapping queued ones cancel each other out.
+-- Gives unitID the jobs placements.positions[startIdx, endIdx); shift adds them to its build
+-- order. New jobs overlapping queued ones cancel each other out.
 local function assignJobs(unitID, placements, startIdx, endIdx, shift)
     local order = buildOrders[unitID]
-    local extends = shift
-        and order
-        and order.buildDef == placements.buildDef
-        and order.facing == placements.facing
-    if not extends then
+    if not (shift and order) then
         Spring.GiveOrderToUnit(unitID, CMD.STOP, {}, {})
-        order = {
-            buildDef = placements.buildDef,
-            halfX = placements.halfX,
-            halfZ = placements.halfZ,
-            facing = placements.facing,
-            currentJob = nil,
-            queue = {},
-        }
+        order = { currentJob = nil, queue = {} }
         buildOrders[unitID] = order
     end
 
     local queue = order.queue
-    local halfX = placements.halfX - HALF_TILE_SIZE
-    local halfZ = placements.halfZ - HALF_TILE_SIZE
     local overlapping = {}
     for i = startIdx, endIdx - 1 do
-        local pos = placements.positions[i]
+        local new = placements.positions[i]
         local overlaps = false
         for _, job in ipairs(queue) do
-            if rectsIntersect(pos.x, pos.z, halfX, halfZ, job.x, job.z, halfX, halfZ) then
+            if
+                rectsIntersect(
+                    new.x,
+                    new.z,
+                    new.halfX - HALF_TILE_SIZE,
+                    new.halfZ - HALF_TILE_SIZE,
+                    job.x,
+                    job.z,
+                    job.halfX - HALF_TILE_SIZE,
+                    job.halfZ - HALF_TILE_SIZE
+                )
+            then
                 table.insert(overlapping, job)
                 overlaps = true
             end
         end
         if not overlaps then
-            queue[#queue + 1] = { ud = placements.buildDef.id, x = pos.x, z = pos.z }
+            queue[#queue + 1] = new
         end
     end
 
@@ -534,19 +531,27 @@ local function assignJobs(unitID, placements, startIdx, endIdx, shift)
     end
 
     order.originalSize = #queue
-    notify(
-        "Build Order for " .. #queue .. "x " .. placements.buildDef.name .. " CREATED.",
-        "success"
-    )
+    notify("Build Order for " .. #queue .. " buildings CREATED.", "success")
 end
 
 -- Splits the selection into builders that get build orders and helpers that guard them.
--- distribute: every capable builder gets a share; otherwise only the first one does.
-local function splitBuilders(selectedUnits, buildDefID, distribute, jobCount)
+-- Builders can build every job's building. distribute: every one of them gets a share;
+-- otherwise only the first one does.
+local function splitBuilders(selectedUnits, jobs, distribute)
+    local buildDefIDs = {}
+    for _, job in ipairs(jobs) do
+        buildDefIDs[job.buildDef.id] = true
+    end
+
     local builders, helpers = {}, {}
     for _, unitID in ipairs(selectedUnits) do
-        local isBuilder, canBuild = unitCanBuild(unitID, buildDefID)
-        if canBuild and (distribute or #builders == 0) then
+        local isBuilder, canBuild = false, true
+        for buildDefID in pairs(buildDefIDs) do
+            local canBuildThis
+            isBuilder, canBuildThis = unitCanBuild(unitID, buildDefID)
+            canBuild = canBuild and canBuildThis
+        end
+        if canBuild and isBuilder and (distribute or #builders == 0) then
             builders[#builders + 1] = unitID
         elseif isBuilder then
             helpers[#helpers + 1] = unitID
@@ -554,7 +559,7 @@ local function splitBuilders(selectedUnits, buildDefID, distribute, jobCount)
     end
 
     -- More builders than jobs: the extra ones help instead
-    while distribute and #builders > jobCount do
+    while distribute and #builders > #jobs do
         helpers[#helpers + 1] = table.remove(builders, 1)
     end
     return builders, helpers
@@ -563,7 +568,7 @@ end
 -- Gives the placements to the builders among unitIDs (see splitBuilders); the others guard them
 local function distributeJobs(unitIDs, placements, distribute, shift)
     local jobCount = #placements.positions
-    local builders, helpers = splitBuilders(unitIDs, placements.buildDef.id, distribute, jobCount)
+    local builders, helpers = splitBuilders(unitIDs, placements.positions, distribute)
     if #builders == 0 then
         return
     end
@@ -598,32 +603,18 @@ local function hasBuildCommands(unitID)
 end
 
 -- Re-splits the build orders of unitIDs between all of them, like placing with SPACE held.
--- Only orders of the first one's building and facing are pooled; units with another order,
--- or with build commands of their own, are left out. Returns the units taken over as
--- {unitID = true}, or nil when none of them has a build order. Other widgets (Split
--- Builder Queue) call it through WG.buildOrders.split.
+-- Units without an order but with build commands of their own are left out. Returns the
+-- units taken over as {unitID = true}, or nil when none of them has a build order. Other
+-- widgets (Split Builder Queue) call it through WG.buildOrders.split.
 local function resplit(unitIDs)
-    local first
-    for _, unitID in ipairs(unitIDs) do
-        first = first or buildOrders[unitID]
-    end
-    if not first then
-        return nil
-    end
-
-    local placements = {
-        buildDef = first.buildDef,
-        halfX = first.halfX,
-        halfZ = first.halfZ,
-        facing = first.facing,
-        positions = {},
-    }
+    local placements = { positions = {} }
     local units = {}
     local taken = {}
+    local hadOrders = false
     for _, unitID in ipairs(unitIDs) do
         local order = buildOrders[unitID]
-        local sameKind = order and order.buildDef == first.buildDef and order.facing == first.facing
-        if sameKind then
+        if order then
+            hadOrders = true
             -- A job its builder already got the order for stays with it: another builder
             -- would skip it, blocked by the nanoframe
             local keep = order.currentJob and 1 or 0
@@ -635,10 +626,13 @@ local function resplit(unitIDs)
                 buildOrders[unitID] = nil
             end
         end
-        if sameKind or not (order or hasBuildCommands(unitID)) then
+        if order or not hasBuildCommands(unitID) then
             units[#units + 1] = unitID
             taken[unitID] = true
         end
+    end
+    if not hadOrders then
+        return nil
     end
 
     -- shift: builders that kept their job add their share to it
@@ -713,10 +707,11 @@ local function reclaimTargets(targetIDs)
     end
 end
 
--- {unitID = unitDefID} of the ground units (but builderID) overlapping the order's footprint at (x, z)
-local function findBlockers(order, x, z, builderID)
-    local halfX, halfZ = order.halfX - HALF_TILE_SIZE, order.halfZ - HALF_TILE_SIZE
-    local radius = order.buildDef.searchRadius + biggestSearchRadius
+-- {unitID = unitDefID} of the ground units (but builderID) overlapping the job's footprint
+local function findBlockers(job, builderID)
+    local x, z = job.x, job.z
+    local halfX, halfZ = job.halfX - HALF_TILE_SIZE, job.halfZ - HALF_TILE_SIZE
+    local radius = job.buildDef.searchRadius + biggestSearchRadius
     local blockers = {}
     for _, unitID in ipairs(Spring.GetUnitsInCylinder(x, z, radius)) do
         local ux, _, uz = Spring.GetUnitPosition(unitID)
@@ -757,11 +752,11 @@ end
 
 -- Blockers that are not eraseable, of the same type, a turret of the same or a higher
 -- tier (non-turrets count as tier 100 when building, 0 when blocking), or someone
--- else's make the order skip the spot instead of reclaiming
-local function blocksForGood(order, blockerID, blockerDefID)
+-- else's make the job skip the spot instead of reclaiming
+local function blocksForGood(job, blockerID, blockerDefID)
     return not eraseableDefs[blockerDefID]
-        or blockerDefID == order.buildDef.id
-        or (NANO_TIERS[order.buildDef.id] or 100) <= (NANO_TIERS[blockerDefID] or 0)
+        or blockerDefID == job.buildDef.id
+        or (NANO_TIERS[job.buildDef.id] or 100) <= (NANO_TIERS[blockerDefID] or 0)
         or Spring.GetUnitTeam(blockerID) ~= localTeam
 end
 
@@ -777,14 +772,14 @@ local function tryNextJob(builderID, order, now)
         return
     end
 
-    local blockers = findBlockers(order, job.x, job.z, builderID)
+    local blockers = findBlockers(job, builderID)
     if next(blockers) then
         for blockerID, blockerDefID in pairs(blockers) do
-            if blocksForGood(order, blockerID, blockerDefID) then
+            if blocksForGood(job, blockerID, blockerDefID) then
                 table.remove(order.queue, 1)
                 notify(
                     "Skipping construction: "
-                        .. order.buildDef.name
+                        .. job.buildDef.name
                         .. ": blocked by non-eraseable unit.",
                     "warning"
                 )
@@ -802,8 +797,8 @@ local function tryNextJob(builderID, order, now)
         local y = Spring.GetGroundHeight(job.x, job.z)
         Spring.GiveOrderToUnit(
             builderID,
-            -order.buildDef.id,
-            { job.x, y, job.z, order.facing },
+            -job.buildDef.id,
+            { job.x, y, job.z, job.facing },
             { shift = false }
         )
     end
@@ -822,7 +817,7 @@ local function updateBuildOrder(builderID, order)
     if
         order.currentJob
         and order.currentJob ~= JOB_ORDERED
-        and Spring.GetUnitCurrentCommand(builderID) ~= -order.buildDef.id
+        and Spring.GetUnitCurrentCommand(builderID) ~= -order.queue[1].buildDef.id
     then
         table.remove(order.queue, 1)
         order.currentJob = nil
@@ -831,14 +826,7 @@ local function updateBuildOrder(builderID, order)
     if not order.currentJob then
         if #order.queue == 0 then
             buildOrders[builderID] = nil
-            notify(
-                "Build Order for "
-                    .. order.originalSize
-                    .. "x "
-                    .. order.buildDef.name
-                    .. " COMPLETED.",
-                "success"
-            )
+            notify("Build Order for " .. order.originalSize .. " buildings COMPLETED.", "success")
         else
             tryNextJob(builderID, order, now)
         end
@@ -851,7 +839,7 @@ end
 local function cancelBuildOrder(unitID, reason, kind)
     local order = buildOrders[unitID]
     if order then
-        notify(reason .. " " .. #order.queue .. "x " .. order.buildDef.name .. " CANCELED.", kind)
+        notify(reason .. " " .. #order.queue .. " buildings CANCELED.", kind)
         buildOrders[unitID] = nil
     end
 end
@@ -886,7 +874,7 @@ local function drawQueue(order, alpha)
         else
             gl.Color(0.0, 0.5, 1.0, alpha)
         end
-        drawFootprint(job.x, job.z, order.halfX, order.halfZ, 5)
+        drawFootprint(job.x, job.z, job.halfX, job.halfZ, 5)
 
         local y = Spring.GetGroundHeight(job.x, job.z) + 5
         if prevX then
@@ -1274,7 +1262,7 @@ BUILD ORDERS: click "Enable", then place buildings as usual
   blockers on the Eraseable list are reclaimed by turrets in range,
   other blockers are skipped; with no turret in range the order waits
   Non-priority buildings are built normally
-  [SHIFT] queues more of the same building; another building replaces the queue
+  [SHIFT] adds to the queue (any building or rotation); without it the queue is replaced
   Hold [SPACE] while placing to split the buildings between selected builders
   [N] skips the current building of the selected builders
   Move, stop, fight and similar orders without [SHIFT] cancel the build order
@@ -1511,7 +1499,7 @@ end
 
 function widget:UnitCreated(unitID, unitDefID, _, builderID)
     local order = builderID and buildOrders[builderID]
-    if order and order.buildDef.id == unitDefID then
+    if order and order.queue[1] and order.queue[1].buildDef.id == unitDefID then
         order.currentJob = unitID
     end
 end
@@ -1534,7 +1522,10 @@ function widget:UnitDestroyed(unitID)
             if prefs.REPEAT then
                 order.updateDelay = Spring.GetGameFrame() + RETRY_DELAY
             end
-            notify("Unit " .. builderID .. " lost a " .. order.buildDef.name .. " job", "warning")
+            notify(
+                "Unit " .. builderID .. " lost a " .. order.queue[1].buildDef.name .. " job",
+                "warning"
+            )
         end
     end
     cancelBuildOrder(unitID, "Worker DESTROYED!", "fail")
