@@ -195,6 +195,12 @@ end
 
 -- Builder started a new building: hand it to an idle fighting nano and track it
 local function assignNano(unitID, builder, targetID)
+    -- Only skip ahead on a build command, never on guard or repair (assisting another builder)
+    local cmdID, _, cmdTag = Spring.GetUnitCurrentCommand(unitID)
+    if not cmdID or cmdID >= 0 then
+        return
+    end
+
     local nanoID = selectBestNano(targetID, nanosNearUnit(targetID))
     if not nanoID then
         return
@@ -212,7 +218,6 @@ local function assignNano(unitID, builder, targetID)
         return
     end
 
-    local _, _, cmdTag = Spring.GetUnitCurrentCommand(unitID)
     builder.nanoID = nanoID
     builder.buildingID = targetID
     builder.cmdTag = cmdTag

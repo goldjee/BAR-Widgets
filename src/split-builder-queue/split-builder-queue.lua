@@ -60,6 +60,7 @@ local shiftHeldOnPress = false
 local processingBatch = false
 local currentUnitIndex = 0
 local totalUnitsInBatch = 0
+local splitByBuildOrders = false -- the batch was handed to Build Orders
 
 local selfOrganizeTask = nil -- coroutine of the running self-organize
 
@@ -276,6 +277,12 @@ local function startSelfOrganize(mode)
         return
     end
 
+    -- Build Orders keeps its jobs to itself; it re-splits them between the builders instead
+    -- ponytail: builders without a build order keep their queue; merge both if mixed groups matter
+    if WG.buildOrders and WG.buildOrders.split(builders) then
+        return
+    end
+
     selfOrganizeTask = coroutine.wrap(function()
         local builderData, mergedCommands, buildCommands = collectSelfOrganizeData(builders)
         coroutine.yield()
@@ -336,6 +343,7 @@ function widget:MousePress()
     processingBatch = false
     currentUnitIndex = 0
     totalUnitsInBatch = 0
+    splitByBuildOrders = false
 
     return false -- don't eat the event
 end
@@ -355,6 +363,20 @@ function widget:UnitCommand(unitID, unitDefID, _, cmdID, cmdParams)
         or not BUILDER_DEFS[Spring.GetUnitDefID(targetID)]
     then
         return false
+    end
+
+    -- Build Orders keeps its jobs to itself: on the first guard of the batch, it re-splits the
+    -- target's build order between the target and the guards instead
+    if not processingBatch and WG.buildOrders then
+        local units = Spring.GetSelectedUnits()
+        if not Spring.IsUnitSelected(targetID) then
+            table.insert(units, 1, targetID) -- first, so its build order is the one re-split
+        end
+        splitByBuildOrders = WG.buildOrders.split(units)
+    end
+    if splitByBuildOrders then
+        processingBatch = true
+        return true
     end
 
     local commands = Spring.GetUnitCommands(targetID, -1)

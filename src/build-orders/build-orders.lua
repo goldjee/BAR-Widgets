@@ -39,17 +39,6 @@ local SNAP_SIZE = TILE_SIZE * 2 -- buildings snap to a 16 unit grid
 -- order.currentJob: nil = pick the next job, JOB_ORDERED = build order given, else the building's unitID
 local JOB_ORDERED = -1
 
--- Holo Place (holo-place.lua) modes, indexed by mode + 1, as build progress to move on at
-local CMD_HOLO_PLACE = 28341
-local HOLO_TO_YOLO = {
-    1, -- off: 100%
-    0.3, -- smart: Holo Place's 30% base threshold
-    0.9,
-    0.6,
-    0.3,
-    0.001, -- "instant mode" is not really instant
-}
-
 -- Construction turret tiers: a turret can't erase one of the same or a higher tier
 local NANO_TIERS = {}
 for name, tier in pairs({
@@ -151,10 +140,9 @@ local prefs = {
 local enableBuildOrders = false
 local localTeam
 
--- {builderID = {buildDef, halfX, halfZ, facing, yoloplace, currentJob, queue = {{ud, x, z}},
+-- {builderID = {buildDef, halfX, halfZ, facing, currentJob, queue = {{ud, x, z}},
 -- originalSize, checkTime, updateDelay}}
 local buildOrders = {}
-local knownYolos = {} -- {unitID = build progress to move on at}, set through Holo Place
 
 -- {unitDefID = {id, name, xsize, zsize, halfX, halfZ, searchRadius}}, see buildLookup()
 local priorityDefs = {}
@@ -512,7 +500,6 @@ local function assignJobs(unitID, placements, startIdx, endIdx, shift)
             halfX = placements.halfX,
             halfZ = placements.halfZ,
             facing = placements.facing,
-            yoloplace = knownYolos[unitID] or 1.0,
             currentJob = nil,
             queue = {},
         }
@@ -571,6 +558,80 @@ local function splitBuilders(selectedUnits, buildDefID, distribute, jobCount)
         helpers[#helpers + 1] = table.remove(builders, 1)
     end
     return builders, helpers
+end
+
+-- Gives the placements to the builders among unitIDs (see splitBuilders); the others guard them
+local function distributeJobs(unitIDs, placements, distribute, shift)
+    local jobCount = #placements.positions
+    local builders, helpers = splitBuilders(unitIDs, placements.buildDef.id, distribute, jobCount)
+    if #builders == 0 then
+        return
+    end
+
+    -- Even shares of the placements; the first builders take the remainder
+    local share = math.floor(jobCount / #builders)
+    local remainder = jobCount - share * #builders
+    local nextJob = 1
+    for i, unitID in ipairs(builders) do
+        local count = share + (i <= remainder and 1 or 0)
+        assignJobs(unitID, placements, nextJob, nextJob + count, shift)
+        nextJob = nextJob + count
+    end
+
+    for i, helperID in ipairs(helpers) do
+        Spring.GiveOrderToUnit(
+            helperID,
+            CMD.GUARD,
+            { builders[(i - 1) % #builders + 1] },
+            { "shift" }
+        )
+    end
+end
+
+-- Re-splits the build orders of unitIDs between all of them, like placing with SPACE held.
+-- Only orders of the first one's building and facing are pooled; units with another order
+-- are left out. Returns false when none of them has a build order. Other widgets (Split
+-- Builder Queue) call it through WG.buildOrders.split.
+local function resplit(unitIDs)
+    local first
+    for _, unitID in ipairs(unitIDs) do
+        first = first or buildOrders[unitID]
+    end
+    if not first then
+        return false
+    end
+
+    local placements = {
+        buildDef = first.buildDef,
+        halfX = first.halfX,
+        halfZ = first.halfZ,
+        facing = first.facing,
+        positions = {},
+    }
+    local units = {}
+    for _, unitID in ipairs(unitIDs) do
+        local order = buildOrders[unitID]
+        local sameKind = order and order.buildDef == first.buildDef and order.facing == first.facing
+        if sameKind then
+            -- A job its builder already got the order for stays with it: another builder
+            -- would skip it, blocked by the nanoframe
+            local keep = order.currentJob and 1 or 0
+            for i = keep + 1, #order.queue do
+                table.insert(placements.positions, order.queue[i])
+                order.queue[i] = nil
+            end
+            if keep == 0 then
+                buildOrders[unitID] = nil
+            end
+        end
+        if sameKind or not order then
+            units[#units + 1] = unitID
+        end
+    end
+
+    -- shift: builders that kept their job add their share to it
+    distributeJobs(units, placements, true, true)
+    return true
 end
 
 -- Reclaim
@@ -745,13 +806,14 @@ local function updateBuildOrder(builderID, order)
         order.updateDelay = nil
     end
 
-    -- Move on once the current building passes the yolo (Holo Place) progress
-    if order.currentJob and order.currentJob ~= JOB_ORDERED then
-        local _, _, _, _, buildProgress = Spring.GetUnitHealth(order.currentJob)
-        if buildProgress and buildProgress >= order.yoloplace then
-            table.remove(order.queue, 1)
-            order.currentJob = nil
-        end
+    -- Move on once the builder dropped the started building (Holo Place does at its threshold)
+    if
+        order.currentJob
+        and order.currentJob ~= JOB_ORDERED
+        and Spring.GetUnitCurrentCommand(builderID) ~= -order.buildDef.id
+    then
+        table.remove(order.queue, 1)
+        order.currentJob = nil
     end
 
     if not order.currentJob then
@@ -779,15 +841,6 @@ local function cancelBuildOrder(unitID, reason, kind)
     if order then
         notify(reason .. " " .. #order.queue .. "x " .. order.buildDef.name .. " CANCELED.", kind)
         buildOrders[unitID] = nil
-    end
-end
-
-local function setYoloPlace(value)
-    for _, unitID in ipairs(Spring.GetSelectedUnits()) do
-        knownYolos[unitID] = value
-        if buildOrders[unitID] then
-            buildOrders[unitID].yoloplace = value
-        end
     end
 end
 
@@ -1338,9 +1391,11 @@ function widget:Initialize()
     priorityDefs = buildLookup(loadList("priority"))
     eraseableDefs = buildLookup(loadList("eraseable"))
     createUI()
+    WG.buildOrders = { split = resplit }
 end
 
 function widget:Shutdown()
+    WG.buildOrders = nil
     if not myUI then -- removed before setup (spectating), nothing to save
         return
     end
@@ -1402,35 +1457,7 @@ function widget:MouseRelease(mx, my, button)
         return false
     end
 
-    local jobCount = #placements.positions
-    local builders, helpers = splitBuilders(
-        Spring.GetSelectedUnits(),
-        placements.buildDef.id,
-        Spring.GetKeyState(KEY_SPACE),
-        jobCount
-    )
-    if #builders == 0 then
-        return false
-    end
-
-    -- Even shares of the placements; the first builders take the remainder
-    local share = math.floor(jobCount / #builders)
-    local remainder = jobCount - share * #builders
-    local nextJob = 1
-    for i, unitID in ipairs(builders) do
-        local count = share + (i <= remainder and 1 or 0)
-        assignJobs(unitID, placements, nextJob, nextJob + count, shift)
-        nextJob = nextJob + count
-    end
-
-    for i, helperID in ipairs(helpers) do
-        Spring.GiveOrderToUnit(
-            helperID,
-            CMD.GUARD,
-            { builders[(i - 1) % #builders + 1] },
-            { "shift" }
-        )
-    end
+    distributeJobs(Spring.GetSelectedUnits(), placements, Spring.GetKeyState(KEY_SPACE), shift)
     return false
 end
 
@@ -1447,11 +1474,7 @@ function widget:KeyPress(key)
     return false
 end
 
-function widget:CommandNotify(cmdID, cmdParams, cmdOptions)
-    if cmdID == CMD_HOLO_PLACE then
-        setYoloPlace(HOLO_TO_YOLO[cmdParams[1] + 1])
-        return false
-    end
+function widget:CommandNotify(cmdID, _, cmdOptions)
     if (cmdID < 0 or CANCEL_CMDS[cmdID]) and not cmdOptions.shift then
         for _, unitID in ipairs(Spring.GetSelectedUnits()) do
             local order = buildOrders[unitID]
@@ -1503,12 +1526,10 @@ function widget:UnitDestroyed(unitID)
         end
     end
     cancelBuildOrder(unitID, "Worker DESTROYED!", "fail")
-    knownYolos[unitID] = nil
 end
 
 local function forgetChangedTeamWorker(_, unitID)
     cancelBuildOrder(unitID, "Worker changed team", "fail")
-    knownYolos[unitID] = nil
 end
 
 widget.UnitGiven = forgetChangedTeamWorker

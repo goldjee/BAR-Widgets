@@ -22,6 +22,10 @@ Select constructors and order them to guard another constructor while holding:
 
 Type `/luaui copyqueue` (or `/luaui cq`) in chat to print this list.
 
+## With Build Orders
+
+Constructors with a [Build Orders](../build-orders) order are re-split by Build Orders itself, as if the buildings had been placed with SPACE held, so blockers still get reclaimed. All the hotkeys and guard modifiers above do the same even split for them.
+
 ## Installation
 
 Take all files from this folder into your `[...]\Beyond-All-Reason\data\LuaUI\Widgets\split-builder-queue` folder and enable the "Split Builder Queue" widget from the in-game settings menu.
