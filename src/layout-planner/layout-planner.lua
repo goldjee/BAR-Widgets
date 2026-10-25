@@ -853,16 +853,25 @@ end
 -- Drawing
 -- ========================================
 
--- Square building footprint at BU (bx, bz)
-local function drawSquare(bx, bz, size)
+-- Square building footprint at BU (bx, bz); call inside gl.BeginEnd(GL.QUADS)
+local function squareVertices(bx, bz, size)
     local x, z = buToWorld(bx, bz)
     local y = Spring.GetGroundHeight(x, z) + DRAW_HEIGHT
     local length = BU_SIZE * size
+    gl.Vertex(x, y, z)
+    gl.Vertex(x + length, y, z)
+    gl.Vertex(x + length, y, z + length)
+    gl.Vertex(x, y, z + length)
+end
+
+-- Footprints at {bx, bz} positions shifted by (dx, dz), in one batch
+-- ponytail: rebuilt every frame - cache currentLayout in a gl.CreateList, dirtied in
+-- applyEdit and on the color pref, if big layouts still cost frames
+local function drawSquares(positions, size, dx, dz)
     gl.BeginEnd(GL.QUADS, function()
-        gl.Vertex(x, y, z)
-        gl.Vertex(x + length, y, z)
-        gl.Vertex(x + length, y, z + length)
-        gl.Vertex(x, y, z + length)
+        for _, pos in ipairs(positions) do
+            squareVertices(pos[1] + dx, pos[2] + dz, size)
+        end
     end)
 end
 
@@ -914,9 +923,7 @@ local function drawLayout(layout)
         else
             gl.Color(0, 1, 0, 0.3)
         end
-        for _, pos in ipairs(layout.buildings[size]) do
-            drawSquare(pos[1], pos[2], size)
-        end
+        drawSquares(layout.buildings[size], size, 0, 0)
     end
     gl.Color(0, 1, 0, 0.6)
     gl.LineWidth(3)
@@ -939,9 +946,7 @@ local function drawPreview(pos)
     if loadedData then
         local dx, dz = loadedOffset(loadedData, bx, bz)
         for size, group in pairs(loadedData.layout.buildings) do
-            for _, b in ipairs(group) do
-                drawSquare(b[1] + dx, b[2] + dz, size)
-            end
+            drawSquares(group, size, dx, dz)
         end
         gl.LineWidth(3)
         drawLines(loadedData.layout.lines, dx, dz, DRAW_HEIGHT + 1)
@@ -991,9 +996,11 @@ local function drawPreview(pos)
                 gl.Vertex(x - 2, y, z + 2)
             end)
         end
-        for _, b in ipairs(list) do
-            drawSquare(b.x, b.z, size)
-        end
+        gl.BeginEnd(GL.QUADS, function()
+            for _, b in ipairs(list) do
+                squareVertices(b.x, b.z, size)
+            end
+        end)
     end
 end
 

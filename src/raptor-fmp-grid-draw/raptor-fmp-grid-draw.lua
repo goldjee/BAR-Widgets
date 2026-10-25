@@ -93,16 +93,6 @@ local MAX_SEGMENT_LENGTH = 24 * GRID_SQUARE
 local LINES_PER_BATCH = 10 -- the engine drops map marks sent too fast
 local BATCH_INTERVAL = 0.1 -- seconds
 
--- Cell edges per border bit, as {bit, x1, z1, x2, z2} in cell units
-local EDGES = {
-    { TOP, 0, 0, 1, 0 },
-    { RIGHT, 1, 0, 1, 1 },
-    { BOTTOM, 0, 1, 1, 1 },
-    { LEFT, 0, 0, 0, 1 },
-    { DIAG_DOWN, 0, 0, 1, 1 },
-    { DIAG_UP, 1, 0, 0, 1 },
-}
-
 -- State
 -- ========================================
 
@@ -127,6 +117,33 @@ local function queueLine(x1, z1, x2, z2)
     for i = 0, segments - 1 do
         local t1, t2 = i / segments, (i + 1) / segments
         table.insert(lineQueue, { x1 + dx * t1, z1 + dz * t1, x1 + dx * t2, z1 + dz * t2 })
+    end
+end
+
+-- Marks the cell-long edge along line a at cell offset b
+local function addEdge(edges, a, b)
+    edges[a] = edges[a] or {}
+    edges[a][b] = true
+end
+
+-- Queues each run of consecutive edges on lines 0..lineCount as one line, so an
+-- edge shared by two cells and a border spanning many cells cost the fewest marks
+local function queueRuns(edges, lineCount, cellCount, horizontal)
+    for a = 0, lineCount do
+        local runStart
+        for b = 0, cellCount do -- edges[a][cellCount] is never set, so it ends the last run
+            local on = edges[a] and edges[a][b]
+            if on and not runStart then
+                runStart = b
+            elseif not on and runStart then
+                if horizontal then
+                    queueLine(runStart * CELL_SIZE, a * CELL_SIZE, b * CELL_SIZE, a * CELL_SIZE)
+                else
+                    queueLine(a * CELL_SIZE, runStart * CELL_SIZE, a * CELL_SIZE, b * CELL_SIZE)
+                end
+                runStart = nil
+            end
+        end
     end
 end
 
@@ -166,21 +183,35 @@ function widget:Initialize()
         'say a: Go to Settings -> Interface, turn off "Auto Erase Map Marks" so you never lose the grid lines :)'
     )
 
+    -- hEdges[z][x] runs from cell corner (x, z) to (x + 1, z), vEdges[x][z] to (x, z + 1)
+    local hEdges, vEdges = {}, {}
     for row, cells in ipairs(MAPPING) do
         for col, value in ipairs(cells) do
-            local x, z = (col - 1) * CELL_SIZE, (row - 1) * CELL_SIZE
-            for _, edge in ipairs(EDGES) do
-                if hasBit(value, edge[1]) then
-                    queueLine(
-                        x + edge[2] * CELL_SIZE,
-                        z + edge[3] * CELL_SIZE,
-                        x + edge[4] * CELL_SIZE,
-                        z + edge[5] * CELL_SIZE
-                    )
-                end
+            local x, z = col - 1, row - 1
+            if hasBit(value, TOP) then
+                addEdge(hEdges, z, x)
+            end
+            if hasBit(value, BOTTOM) then
+                addEdge(hEdges, z + 1, x)
+            end
+            if hasBit(value, LEFT) then
+                addEdge(vEdges, x, z)
+            end
+            if hasBit(value, RIGHT) then
+                addEdge(vEdges, x + 1, z)
+            end
+            local x1, z1, x2, z2 =
+                x * CELL_SIZE, z * CELL_SIZE, (x + 1) * CELL_SIZE, (z + 1) * CELL_SIZE
+            if hasBit(value, DIAG_DOWN) then
+                queueLine(x1, z1, x2, z2)
+            end
+            if hasBit(value, DIAG_UP) then
+                queueLine(x2, z1, x1, z2)
             end
         end
     end
+    queueRuns(hEdges, #MAPPING, #MAPPING[1], true)
+    queueRuns(vEdges, #MAPPING[1], #MAPPING, false)
 end
 
 -- Draws the queued lines in batches, then removes itself: the marks stay on the map
