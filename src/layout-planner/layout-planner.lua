@@ -1134,7 +1134,7 @@ local function makeElement(params)
         y = 0,
         width = params.width or 100,
         height = params.height or 30,
-        bgColor = params.bgColor or { 0.1, 0.1, 0.1, 0.8 },
+        bgColor = params.bgColor or TRANSPARENT,
         margin = params.margin or 0,
         padding = params.padding or 0,
         tooltip = params.tooltip,
@@ -1209,7 +1209,7 @@ end
 local function makeLabel(params)
     local label = makeElement(params)
     label.text = params.text or ""
-    label.fontSize = params.fontSize or 14
+    label.fontSize = params.fontSize or 16
     label.fontColor = params.fontColor or { 1, 1, 1, 1 }
 
     function label:GetSize()
@@ -1289,7 +1289,6 @@ local function makeWindow(params)
     window.title = params.title
     window.fontSize = params.fontSize or 18
     window.fontColor = params.fontColor or { 1, 1, 1, 1 }
-    window.bgColor = params.bgColor or TRANSPARENT
     window.content = params.content
     window.dragging = false
     window.dragOffsetX = 0
@@ -1297,8 +1296,9 @@ local function makeWindow(params)
 
     local titleButtons = {}
     for _, buttonParams in ipairs(params.titleButtons) do
-        buttonParams.height = TITLE_BAR_HEIGHT - 8
-        table.insert(titleButtons, makeButton(buttonParams))
+        local titleButton = makeButton(buttonParams)
+        titleButton:GetSize() -- the window never sizes them while drawing
+        table.insert(titleButtons, titleButton)
     end
 
     -- Grows with the content, but doesn't shrink when the content is swapped
@@ -1396,8 +1396,6 @@ TIPS
   Drag the window by its title bar
   Trouble? Ask on the widget's Discord page]]
 
-local FONT_SIZE = 16
-
 -- Button colors by role
 local BLUE = { 0.2, 0.35, 0.9, 1.0 } -- main actions
 local GREEN = { 0.15, 0.6, 0.25, 1.0 } -- creating
@@ -1407,7 +1405,7 @@ local CYAN = { 0.0, 0.6, 0.6, 1.0 } -- toggled on
 
 -- Horizontal box without its own padding or background, so rows line up
 local function makeRow()
-    return makeBox({ orientation = "horizontal", spacing = 6, padding = 0, bgColor = TRANSPARENT })
+    return makeBox({ orientation = "horizontal", spacing = 6, padding = 0 })
 end
 
 -- Checkbox for a boolean pref
@@ -1416,8 +1414,6 @@ local function makePrefToggle(text, tooltip, key)
         text = text,
         tooltip = tooltip,
         checked = prefs[key],
-        fontSize = FONT_SIZE,
-        bgColor = TRANSPARENT,
         onToggle = function(checked)
             prefs[key] = checked
             log(text .. ": " .. (checked and "ON" or "OFF"))
@@ -1459,13 +1455,12 @@ local function refreshSlots()
     local slots = listSlots()
     slotsBox.children = {}
     local header = makeRow()
-    header:Add(makeLabel({ text = "Layouts", fontSize = FONT_SIZE, bgColor = TRANSPARENT }))
+    header:Add(makeLabel({ text = "Layouts" }))
     -- ponytail: deleted slot numbers stay as gaps; renumber the files if that bothers people
     header:Add(makeButton({
         text = "Save New",
         tooltip = "Save the current layout as a new one",
         bgColor = GREEN,
-        fontSize = FONT_SIZE,
         onClick = function()
             if saveLayout((slots[#slots] or 0) + 1, currentLayout) then
                 refreshSlots()
@@ -1477,14 +1472,11 @@ local function refreshSlots()
         local row = makeRow()
         row:Add(makeLabel({
             text = string.format("%02d", slot),
-            fontSize = FONT_SIZE,
-            bgColor = TRANSPARENT,
         }))
         row:Add(makeButton({
             text = "Load",
             tooltip = "Pick up this layout, then place it with [LMB]",
             bgColor = BLUE,
-            fontSize = FONT_SIZE,
             onClick = function()
                 loadLayout(slot)
             end,
@@ -1493,7 +1485,6 @@ local function refreshSlots()
             text = "Overwrite",
             tooltip = "Replace this layout with the current one",
             bgColor = GREY,
-            fontSize = FONT_SIZE,
             onConfirm = function()
                 saveLayout(slot, currentLayout)
                 refreshSlots()
@@ -1502,7 +1493,6 @@ local function refreshSlots()
         row:Add(makeConfirmButton({
             text = "Delete",
             bgColor = GREY,
-            fontSize = FONT_SIZE,
             onConfirm = function()
                 deleteLayout(slot)
                 refreshSlots()
@@ -1514,7 +1504,7 @@ end
 
 local function createUI()
     -- Loading and rendering come first; drawing is used much less
-    local content = makeBox({ bgColor = TRANSPARENT, padding = 6, spacing = 6 })
+    local content = makeBox({ padding = 6, spacing = 6 })
 
     local sizeRow = makeRow()
     for i, buildingType in ipairs(BUILDING_TYPES) do
@@ -1522,7 +1512,6 @@ local function createUI()
             text = buildingType.name,
             tooltip = buildingType.tooltip,
             bgColor = i == currentSizeIndex and CYAN or GREY,
-            fontSize = FONT_SIZE,
             onClick = function()
                 currentSizeIndex = i
                 for j, button in ipairs(sizeRow.children) do
@@ -1537,14 +1526,12 @@ local function createUI()
         text = "Render",
         tooltip = "Draw the current layout on the map as line marks",
         bgColor = BLUE,
-        fontSize = FONT_SIZE,
         onClick = renderLayout,
     }))
     actionRow:Add(makeButton({
         text = "Clear",
         tooltip = "Empty the current layout ([CTRL]+[Z] to undo)",
         bgColor = GREY,
-        fontSize = FONT_SIZE,
         onClick = function()
             local command = {}
             pushClearLayout(command, currentLayout)
@@ -1555,7 +1542,6 @@ local function createUI()
         text = "Draw",
         tooltip = "Place building shapes with [LMB] and lines with [RMB]",
         bgColor = GREY,
-        fontSize = FONT_SIZE,
         onClick = function(self)
             drawingMode = not drawingMode
             self.bgColor = drawingMode and CYAN or GREY
@@ -1568,7 +1554,6 @@ local function createUI()
         text = "Remind Allies",
         tooltip = "Tell allies in chat how to stop map marks from being auto-erased",
         bgColor = GREY,
-        fontSize = FONT_SIZE,
         onClick = function()
             Spring.SendCommands({
                 'say a: Go to Settings -> Interface, turn off "Auto Erase Map Marks" so you never lose the layout lines again :)',
@@ -1576,36 +1561,22 @@ local function createUI()
         end,
     }))
 
-    slotsBox = makeBox({ spacing = 6, padding = 0, bgColor = TRANSPARENT })
+    slotsBox = makeBox({ spacing = 6, padding = 0 })
     refreshSlots()
 
     content:Add(actionRow)
     content:Add(slotsBox)
 
-    local settingsContent = makeBox({ bgColor = TRANSPARENT, padding = 6, spacing = 6 })
-    settingsContent:Add(
-        makePrefToggle("Snap", "Snap buildings to a grid of their own size", "snapBuilding")
-    )
-    settingsContent:Add(
-        makePrefToggle(
-            "Shift Layout",
-            "Move the current layout with [W][A][S][D]",
-            "allowTranslationByKeys"
-        )
-    )
-    settingsContent:Add(
-        makePrefToggle("Draw Chunk Grid", "Show the chunk grid around the mouse", "drawChunkGrid")
-    )
-    settingsContent:Add(
-        makePrefToggle(
-            "Colored types",
-            "Give each building size its own color",
-            "differTypesByColor"
-        )
-    )
-    settingsContent:Add(
-        makePrefToggle("Display Text Hints", "Show usage hints on screen", "showUsageTips")
-    )
+    local settingsContent = makeBox({ padding = 6, spacing = 6 })
+    for _, toggle in ipairs({
+        { "Snap", "Snap buildings to a grid of their own size", "snapBuilding" },
+        { "Shift Layout", "Move the current layout with [W][A][S][D]", "allowTranslationByKeys" },
+        { "Draw Chunk Grid", "Show the chunk grid around the mouse", "drawChunkGrid" },
+        { "Colored types", "Give each building size its own color", "differTypesByColor" },
+        { "Display Text Hints", "Show usage hints on screen", "showUsageTips" },
+    }) do
+        settingsContent:Add(makePrefToggle(unpack(toggle)))
+    end
 
     myUI = makeWindow({
         title = "Layout Planner",
@@ -1617,7 +1588,6 @@ local function createUI()
         titleButtons = {
             {
                 text = "Settings",
-                width = gl.GetTextWidth("Settings") * 14 + 10,
                 bgColor = GREY,
                 onClick = function(button)
                     local opening = myUI.content == content
@@ -1628,14 +1598,12 @@ local function createUI()
             {
                 text = "?",
                 tooltip = HELP_TEXT,
-                width = TITLE_BAR_HEIGHT - 8,
                 bgColor = GREY,
                 onClick = function() end,
             },
             {
                 text = "X",
                 tooltip = "Close the widget",
-                width = TITLE_BAR_HEIGHT - 8,
                 bgColor = GREY,
                 onClick = function()
                     widgetHandler:RemoveWidget()

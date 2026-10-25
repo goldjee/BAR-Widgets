@@ -955,7 +955,7 @@ local function makeElement(params)
         y = 0,
         width = params.width or 100,
         height = params.height or 30,
-        bgColor = params.bgColor or { 0.1, 0.1, 0.1, 0.8 },
+        bgColor = params.bgColor or TRANSPARENT,
         margin = params.margin or 0,
         padding = params.padding or 0,
         tooltip = params.tooltip,
@@ -1030,7 +1030,7 @@ end
 local function makeLabel(params)
     local label = makeElement(params)
     label.text = params.text or ""
-    label.fontSize = params.fontSize or 14
+    label.fontSize = params.fontSize or 16
     label.fontColor = params.fontColor or { 1, 1, 1, 1 }
 
     function label:GetSize()
@@ -1110,7 +1110,6 @@ local function makeWindow(params)
     window.title = params.title
     window.fontSize = params.fontSize or 18
     window.fontColor = params.fontColor or { 1, 1, 1, 1 }
-    window.bgColor = params.bgColor or TRANSPARENT
     window.content = params.content
     window.dragging = false
     window.dragOffsetX = 0
@@ -1118,8 +1117,9 @@ local function makeWindow(params)
 
     local titleButtons = {}
     for _, buttonParams in ipairs(params.titleButtons) do
-        buttonParams.height = TITLE_BAR_HEIGHT - 8
-        table.insert(titleButtons, makeButton(buttonParams))
+        local titleButton = makeButton(buttonParams)
+        titleButton:GetSize() -- the window never sizes them while drawing
+        table.insert(titleButtons, titleButton)
     end
 
     -- Grows with the content, but doesn't shrink when the content is swapped
@@ -1218,8 +1218,6 @@ LISTS: unit def names, editable after "Create Custom ... File" in Settings
   A turret can't erase a turret of its own or a higher tier
   A builder never reclaims itself]]
 
-local FONT_SIZE = 16
-
 -- Button colors by role
 local GREY = { 0.3, 0.3, 0.3, 1.0 } -- everything else
 local CYAN = { 0.0, 0.6, 0.6, 1.0 } -- toggled on
@@ -1230,8 +1228,6 @@ local function makePrefToggle(text, tooltip, key)
         text = text,
         tooltip = tooltip,
         checked = prefs[key],
-        fontSize = FONT_SIZE,
-        bgColor = TRANSPARENT,
         onToggle = function(checked)
             prefs[key] = checked
             notify(text .. ": " .. (checked and "ON" or "OFF"))
@@ -1243,7 +1239,6 @@ local function makeCustomFileButton(kind)
     return makeButton({
         text = "Create Custom " .. kind:gsub("^%l", string.upper) .. " File",
         tooltip = "Copy the default " .. kind .. " list to " .. OVERRIDES_DIR .. "/ to edit it",
-        fontSize = FONT_SIZE,
         bgColor = GREY,
         onClick = function()
             createCustomFile(kind)
@@ -1252,49 +1247,35 @@ local function makeCustomFileButton(kind)
 end
 
 local function createUI()
-    local mainRow =
-        makeBox({ orientation = "horizontal", spacing = 6, padding = 0, bgColor = TRANSPARENT })
+    local mainRow = makeBox({ orientation = "horizontal", spacing = 6, padding = 0 })
     mainRow:Add(makeButton({
         text = "Enable Build Orders",
         tooltip = "Take over build commands (turning off keeps active orders)",
         bgColor = enableBuildOrders and CYAN or GREY,
-        fontSize = FONT_SIZE,
         onClick = function(self)
             enableBuildOrders = not enableBuildOrders
             self.bgColor = enableBuildOrders and CYAN or GREY
             notify("Build Orders: " .. (enableBuildOrders and "ON" or "OFF"))
         end,
     }))
-    uiQueueSizeLabel = makeLabel({ fontSize = FONT_SIZE, bgColor = TRANSPARENT })
+    uiQueueSizeLabel = makeLabel({})
     mainRow:Add(uiQueueSizeLabel)
-    uiMainBox = makeBox({ bgColor = TRANSPARENT, padding = 6, spacing = 6 })
+    uiMainBox = makeBox({ padding = 6, spacing = 6 })
     uiMainBox:Add(mainRow)
 
-    uiConfigBox = makeBox({ bgColor = TRANSPARENT, padding = 6, spacing = 6 })
-    uiConfigBox:Add(
-        makePrefToggle(
-            "Repeat Mode",
-            "Rebuild a building destroyed before its Holo Place threshold",
-            "REPEAT"
-        )
-    )
-    uiConfigBox:Add(
-        makePrefToggle(
-            "Notifications",
-            "Show short event messages under the window",
-            "NOTIFICATIONS"
-        )
-    )
-    uiConfigBox:Add(
-        makePrefToggle(
+    uiConfigBox = makeBox({ padding = 6, spacing = 6 })
+    for _, toggle in ipairs({
+        { "Repeat Mode", "Rebuild a building destroyed before its Holo Place threshold", "REPEAT" },
+        { "Notifications", "Show short event messages under the window", "NOTIFICATIONS" },
+        {
             "Always Draw Queue",
             "Always draw builders' queues (debug: may cost FPS)",
-            "ALWAYS_DRAW_RENDER_PATH"
-        )
-    )
-    uiConfigBox:Add(
-        makePrefToggle("Debug", "Draw extra build order data (debug: may cost FPS)", "DEBUG_MODE")
-    )
+            "ALWAYS_DRAW_RENDER_PATH",
+        },
+        { "Debug", "Draw extra build order data (debug: may cost FPS)", "DEBUG_MODE" },
+    }) do
+        uiConfigBox:Add(makePrefToggle(unpack(toggle)))
+    end
     uiConfigBox:Add(makeCustomFileButton("priority"))
     uiConfigBox:Add(makeCustomFileButton("eraseable"))
 
@@ -1308,7 +1289,6 @@ local function createUI()
         titleButtons = {
             {
                 text = "Settings",
-                width = gl.GetTextWidth("Settings") * 14 + 10,
                 bgColor = GREY,
                 onClick = function(button)
                     local opening = myUI.content == uiMainBox
@@ -1322,14 +1302,12 @@ local function createUI()
             {
                 text = "?",
                 tooltip = HELP_TEXT,
-                width = TITLE_BAR_HEIGHT - 8,
                 bgColor = GREY,
                 onClick = function() end,
             },
             {
                 text = "X",
                 tooltip = "Close the widget",
-                width = TITLE_BAR_HEIGHT - 8,
                 bgColor = GREY,
                 onClick = function()
                     widgetHandler:RemoveWidget()
